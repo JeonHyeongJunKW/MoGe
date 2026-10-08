@@ -16,12 +16,9 @@ except ImportError:
 from tqdm import tqdm
 
 from ..utils.vis import colorize_depth, colorize_normal
+from .visualization_io import write_rgb as _write_rgb
 
 EXR_FLOAT = [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT]
-
-
-def _write_rgb(path: Path, image: np.ndarray, params: Optional[List[int]] = None):
-    cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR), params or [])
 
 
 def visualize_gt(
