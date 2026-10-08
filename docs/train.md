@@ -233,6 +233,12 @@ shard), rather than a checkpoint containing optimizer state.
 
 ### Validation during MoGe-2 training
 
+The separate training-sample visualization controlled by `--vis_every` writes
+point maps as EXR when OpenCV supports it. If the EXR writer is unavailable, both
+GT and prediction point maps are saved as `points*.npy` instead, preserving XYZ
+channel order and floating-point values (load with `numpy.load`). RGB/depth/normal
+previews remain images. This does not affect validation's PLY exports below.
+
 Validation is optional and disabled when no `validation` section or `--val_config`
 is supplied. Copy and edit [`configs/validation/moge2.json`](../configs/validation/moge2.json),
 then add this option to the training/finetuning command:
