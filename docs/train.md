@@ -212,15 +212,20 @@ The `train_moge12` entry point accepts two independent boolean options:
 
 For example, add `--train_scale_head True --train_points_head False` to the
 finetuning command above to train the scale head while freezing the point head.
-Either or both heads can be frozen. These are command-line options; the effective
+One head can be frozen, but at least one must remain trainable. These are command-line options; the effective
 values are recorded in the workspace config under `trainable_heads`.
 
-Frozen head parameters are excluded from the optimizer. Their forward operations
-still propagate gradients to the encoder/neck, and other modules retain their
-existing training behavior. Freezing a head therefore does not fix its predictions
-while upstream features are changing. Losses are not disabled by these options.
+For MoGe-2, all other modules are frozen by default: the entire encoder (including
+feature projections), neck, normal head and mask head. Only the selected scale
+and point heads are included in the optimizer. Frozen modules stay in eval mode
+while the selected heads use train mode. Losses are still computed for logging;
+only paths connected to the selected heads contribute gradients. Both options
+set to `False` are rejected because there would be nothing to train. MoGe-1
+training behavior is unchanged.
 
 When resuming optimizer state, use the same head settings as the original run.
+Checkpoints from the earlier full-model training behavior have different optimizer
+groups and must instead be used as model-only initialization in a new workspace.
 To change which heads are trained, start in a new workspace with
 `--checkpoint none --initial_checkpoint PATH_TO_MODEL.pt`, using a model-only
 checkpoint (for example, a pretrained checkpoint or the saved `00001000.pt` model

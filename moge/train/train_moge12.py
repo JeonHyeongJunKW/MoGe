@@ -42,6 +42,7 @@ from .checkpoint import (
 )
 from .debug import DebugDumper
 from .experiment import RunLogger, setup_accelerator
+from .finetuning import configure_moge2_heads, set_moge2_head_training_modes
 from .utils import (
     build_lr_scheduler,
     build_optimizer,
@@ -159,17 +160,11 @@ def main(
         model_class = import_model_class_by_version(config['model_version'])
         model = model_class(**config['model'])
     # Freeze before constructing EMA, optimizer groups and the distributed wrapper.
-    # Keep the forward graph intact so losses can still train the encoder/neck.
+    # MoGe-2 finetunes only the selected scale/points heads.
     if config['model_version'] == 'v2':
-        for head_name, trainable in config['trainable_heads'].items():
-            head = getattr(model, head_name, None)
-            if head is None:
-                if not trainable:
-                    raise ValueError(f'Cannot freeze {head_name}: it is absent from the model config')
-                continue
-            head.requires_grad_(trainable)
-            print(f'{head_name}: {"trainable" if trainable else "frozen"}')
+        configure_moge2_heads(model, config['trainable_heads'])
     print(f'Total parameters: {sum(p.numel() for p in model.parameters())}')
+    print(f'Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
 
     # Set up EMA model
     if enable_ema and accelerator.is_main_process:
@@ -229,6 +224,8 @@ def main(
     ma_buffer = restore_ma_buffer(workspace, initial_step, accelerator)
 
     model.train()
+    if config['model_version'] == 'v2':
+        set_moge2_head_training_modes(accelerator.unwrap_model(model), config['trainable_heads'])
 
     with (
         train_data_pipe,
