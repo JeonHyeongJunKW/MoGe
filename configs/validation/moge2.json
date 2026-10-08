@@ -1,0 +1,23 @@
+{
+    "every": 1000,
+    "monitor": "depth_metric/rel",
+    "mode": "min",
+    "metric_groups": "global,metric",
+    "resolution_level": 9,
+    "max_samples": null,
+    "seed": 0,
+    "visualization": {
+        "num_samples": 8,
+        "max_points": 50000
+    },
+    "datasets": {
+        "simulation_val": {
+            "path": "path/to/validation_dataset",
+            "split": ".val.txt",
+            "width": 640,
+            "height": 480,
+            "depth": "depth.png",
+            "depth_unit": 1.0
+        }
+    }
+}

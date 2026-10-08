@@ -201,6 +201,150 @@ uv run accelerate launch \
 ```
 
 
+### Choosing which MoGe-2 heads to train
+
+The `train_moge12` entry point accepts two independent boolean options:
+
+| Option | Default | Controlled module |
+| --- | --- | --- |
+| `--train_scale_head` | `True` | `scale_head`: metric scale factor MLP |
+| `--train_points_head` | `True` | `points_head`: affine-invariant point map Conv head |
+
+For example, add `--train_scale_head True --train_points_head False` to the
+finetuning command above to train the scale head while freezing the point head.
+Either or both heads can be frozen. These are command-line options; the effective
+values are recorded in the workspace config under `trainable_heads`.
+
+Frozen head parameters are excluded from the optimizer. Their forward operations
+still propagate gradients to the encoder/neck, and other modules retain their
+existing training behavior. Freezing a head therefore does not fix its predictions
+while upstream features are changing. Losses are not disabled by these options.
+
+When resuming optimizer state, use the same head settings as the original run.
+To change which heads are trained, start in a new workspace with
+`--checkpoint none --initial_checkpoint PATH_TO_MODEL.pt`, using a model-only
+checkpoint (for example, a pretrained checkpoint or the saved `00001000.pt` model
+shard), rather than a checkpoint containing optimizer state.
+
+### Validation during MoGe-2 training
+
+Validation is optional and disabled when no `validation` section or `--val_config`
+is supplied. Copy and edit [`configs/validation/moge2.json`](../configs/validation/moge2.json),
+then add this option to the training/finetuning command:
+
+```bash
+--val_config configs/validation/moge2.json
+```
+
+The file contains the validation settings themselves (not a surrounding
+`validation` key). Alternatively, place the same object under `validation` in
+your training JSON; `--val_config` overrides that section.
+
+```json
+{
+    "every": 1000,
+    "monitor": "depth_metric/rel",
+    "mode": "min",
+    "metric_groups": "global,metric",
+    "resolution_level": 9,
+    "max_samples": null,
+    "seed": 0,
+    "datasets": {
+        "simulation_val": {
+            "path": "/path/to/validation_dataset",
+            "split": ".val.txt",
+            "width": 640,
+            "height": 480,
+            "depth": "depth.png",
+            "depth_unit": 1.0
+        }
+    }
+}
+```
+
+Each `datasets` entry uses the evaluation loader options documented in
+[`docs/eval.md`](eval.md). `split` lists sample directories relative to `path`;
+the training loader's corresponding option is named `index`. Keep validation
+samples out of the training index. For simulation data, split by scene/route
+rather than neighboring frames to avoid train/validation overlap.
+
+- `every`: evaluate after this many optimizer iterations and at the final step.
+  Saved step numbers are zero-based, so `every: 1000` first evaluates step 999.
+- `metric_groups`: existing evaluation suites/categories/groups, e.g.
+  `global,metric` or just `depth_metric`. No validation training loss is computed.
+- `monitor`: metric path in the sample-weighted aggregate used to select the best
+  model. Default `depth_metric/rel` is absolute relative depth error (lower is
+  better). For `depth_metric/delta1`, set `mode: "max"`.
+- `max_samples`: first N indexed samples **per dataset** after any `subset`
+  stride; `null` evaluates all samples. Ordering and preprocessing are fixed,
+  with no training augmentation. `resolution_level` controls inference tokens.
+- `depth_unit`: conversion to meters; use `1.0` for meter-valued depth. Relative
+  datasets may omit it and use an invariant monitor such as
+  `depth_affine_invariant/rel`. Validation also applies `metric_scale` or
+  `depth_scale` from each sample's `meta.json`, matching training. The optional
+  dataset flag `metric_from_meta: true` marks only annotated samples as metric.
+
+Validation evaluates the **current model**, not EMA, using inferred camera FOV
+(no ground-truth FOV input). All ranks synchronize; rank zero runs the unwrapped
+model in eval/no-grad mode and restores training modes and random states afterward.
+Samples without valid positive depth are skipped and counted. Empty datasets,
+missing monitor metrics, and non-finite predictions/metrics fail explicitly.
+For mixed metric/non-metric datasets, each metric averages only eligible samples.
+
+Outputs are saved independently of `--log_every` and `--checkpoint_every`:
+
+- `validation/step_XXXXXXXX.json`: per-dataset and aggregate metrics, plus counts.
+- `val/<dataset-or-mean>/<metric>`: TensorBoard, W&B and/or MLflow scalars using
+  whichever `--log_type` backends are enabled.
+- `checkpoint/best.pt`: model weights, `model_config`, and validation metadata;
+  overwritten atomically only on strict improvement.
+- `validation/best.json`: best score and step; restored when continuing in the
+  same workspace. Changing validation settings or split contents requires a new
+  workspace, so incomparable scores are not silently reused.
+
+`best.pt` is a **model-only** checkpoint, loadable with
+`MoGeModel.from_pretrained(...)` or `--initial_checkpoint`. It does not contain
+optimizer/scheduler state and does not replace `latest.pt`. Use the normal
+`--checkpoint latest` flow for full training-state resumption.
+
+#### Validation 3D comparisons
+
+Both example validation configs enable point-cloud exports. Add or adjust:
+
+```json
+"visualization": {
+    "num_samples": 8,
+    "max_points": 50000
+}
+```
+
+At each validation step, up to `num_samples` fixed indices per dataset are
+selected evenly across the evaluated split (after `subset` and `max_samples`).
+Invalid selected samples are skipped rather than replaced, so valid selections
+stay comparable between steps. Set `num_samples: 0` to disable exports. Changing
+visualization settings is allowed when resuming an existing workspace.
+
+Files are saved in
+`validation/step_XXXXXXXX/<dataset>/<sample-index>/`:
+
+- `gt.ply`, `pred.ply`: RGB-colored GT and prediction point clouds.
+- `overlay.ply`: both clouds in one file; GT is cyan and prediction is orange.
+- `image.png`: the processed validation RGB image.
+- `info.json`: original sample path, intrinsics, units, coordinate convention,
+  point counts and filtering details.
+
+Open the PLY files in a point-cloud viewer such as CloudCompare or MeshLab.
+Coordinates retain the OpenCV camera frame (+X right, +Y down, +Z forward).
+No scale/shift alignment or display offset is applied, so metric-scale errors
+remain visible. Relative-depth GT is explicitly marked in `info.json` and should
+not be interpreted as a metric-aligned overlay.
+
+`max_points` caps each cloud by deterministically subsampling GT-valid pixels;
+predictions use those same pixel locations. Non-finite or non-positive-Z points
+are omitted. The model's predicted mask is not applied, matching metric
+evaluation. Each overlay contains at most twice `max_points` points. These
+exports reuse validation inference and do not change the full-resolution metrics.
+
 ## Training MoGe-3
 
 MoGe-3 is trained upon a pretrained MoGe-2 checkpoint. 

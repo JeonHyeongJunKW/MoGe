@@ -74,6 +74,9 @@ if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
 @click.option('--enable_gradient_checkpointing', type=bool, default=True, help='Use gradient checkpointing in the backbone')
 @click.option('--precision', type=click.Choice(['fp32', 'mixed_bf16']), default='fp32', help='Numerical precision')
 @click.option('--enable_ema', type=bool, default=True, help='Maintain an exponential moving average of model weights')
+@click.option('--train_scale_head', type=bool, default=True, show_default=True, help='MoGe-2: train the metric scale MLP head; False freezes its parameters')
+@click.option('--train_points_head', type=bool, default=True, show_default=True, help='MoGe-2: train the affine-invariant point map Conv head; False freezes its parameters')
+@click.option('--val_config', type=click.Path(exists=True, dir_okay=False), default=None, help='MoGe-2 validation JSON; overrides the training config validation section')
 @click.option('--debug', 'debug_mode', type=bool, default=False, help='Enable additional debug dumps')
 @click.option('--num_iterations', type=int, default=1000000, help='Number of iterations to train the model')
 @click.option('--checkpoint_every', type=int, default=10000, help='Save a permanent checkpoint every n iterations')
@@ -99,6 +102,9 @@ def main(
     enable_gradient_checkpointing: bool,
     precision: str,
     enable_ema: bool,
+    train_scale_head: bool,
+    train_points_head: bool,
+    val_config: Optional[str],
     debug_mode: bool,
     num_iterations: int,
     checkpoint_every: int,
@@ -119,6 +125,18 @@ def main(
         config = json.load(f)
     if gradient_accumulation_steps < 1:
         raise ValueError(f'--gradient_accumulation_steps must be at least 1, got {gradient_accumulation_steps}')
+    if config['model_version'] != 'v2' and (not train_scale_head or not train_points_head):
+        raise ValueError('--train_scale_head False and --train_points_head False are only supported for MoGe-2')
+    config['trainable_heads'] = {'scale_head': train_scale_head, 'points_head': train_points_head}
+    if val_config is not None:
+        with open(val_config, 'r') as f:
+            config['validation'] = json.load(f)
+    validation = None
+    if config.get('validation') is not None:
+        if config['model_version'] != 'v2':
+            raise ValueError('Training-time validation is currently supported for MoGe-2 only')
+        from .validation import ValidationRunner
+        validation = ValidationRunner(config['validation'], workspace_path)
 
     # Init
     accelerator, device, batch_size_total, workspace = setup_accelerator(
@@ -140,6 +158,17 @@ def main(
         from moge.model import import_model_class_by_version
         model_class = import_model_class_by_version(config['model_version'])
         model = model_class(**config['model'])
+    # Freeze before constructing EMA, optimizer groups and the distributed wrapper.
+    # Keep the forward graph intact so losses can still train the encoder/neck.
+    if config['model_version'] == 'v2':
+        for head_name, trainable in config['trainable_heads'].items():
+            head = getattr(model, head_name, None)
+            if head is None:
+                if not trainable:
+                    raise ValueError(f'Cannot freeze {head_name}: it is absent from the model config')
+                continue
+            head.requires_grad_(trainable)
+            print(f'{head_name}: {"trainable" if trainable else "frozen"}')
     print(f'Total parameters: {sum(p.numel() for p in model.parameters())}')
 
     # Set up EMA model
@@ -443,6 +472,9 @@ def main(
                 # entry holds live CUDA scalars, so it has to be dropped here or it grows without
                 # bound for the whole run.
                 records = []
+
+            if validation is not None and validation.is_due(i_step, num_iterations):
+                validation.run(model, accelerator, config['model'], i_step, logger)
 
             # Save checkpoint
             due = checkpoint_saver.save_if_due(i_step)

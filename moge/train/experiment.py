@@ -147,6 +147,11 @@ class RunLogger:
                 print('Error while logging metrics to Weights & Biases')
                 traceback.print_exc()
 
+    def log_validation(self, records: Dict[str, float], step: int):
+        """Upload validation scalars without mixing them into training averages."""
+        if self.accelerator.is_main_process:
+            self._upload(records, step)
+
     def log_metrics(
         self,
         records: List[Dict[str, Any]],
