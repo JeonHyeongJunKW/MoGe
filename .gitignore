@@ -401,7 +401,7 @@ FodyWeavers.xsd
 *.egg-info/
 /build
 
-# MoGe 
+# MoGe
 /data*
 /download
 /extract
@@ -423,3 +423,4 @@ FodyWeavers.xsd
 /tmp
 /tensorboard
 /wandb
+/dataset
