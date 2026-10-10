@@ -1,0 +1,50 @@
+{
+    "base_config": "configs/train/gaemi_moge2_vits_small_augmentation.json",
+    "validation_config": "configs/validation/gaemi_moge2_vits_sweep.json",
+    "experiments": [
+        {
+            "name": "baseline_no_aug_both_lr1e5",
+            "description": "Current baseline: no augmentation, train scale and points heads, head LR 1e-5.",
+            "image_augmentation": [],
+            "head_lr": 1e-05,
+            "train_scale_head": true,
+            "train_points_head": true
+        },
+        {
+            "name": "jitter_both_lr1e5",
+            "description": "Measure the effect of mild photometric jitter while training both heads.",
+            "image_augmentation": [
+                "jittering"
+            ],
+            "head_lr": 1e-05,
+            "train_scale_head": true,
+            "train_points_head": true
+        },
+        {
+            "name": "no_aug_scale_only_lr1e5",
+            "description": "Preserve pretrained geometry and adapt only the metric scale head.",
+            "image_augmentation": [],
+            "head_lr": 1e-05,
+            "train_scale_head": true,
+            "train_points_head": false
+        },
+        {
+            "name": "no_aug_both_lr3e6",
+            "description": "Measure whether a more conservative LR improves two-head finetuning.",
+            "image_augmentation": [],
+            "head_lr": 3e-06,
+            "train_scale_head": true,
+            "train_points_head": true
+        },
+        {
+            "name": "jitter_scale_only_lr1e5",
+            "description": "Promising combined setting: mild jitter with scale-only adaptation.",
+            "image_augmentation": [
+                "jittering"
+            ],
+            "head_lr": 1e-05,
+            "train_scale_head": true,
+            "train_points_head": false
+        }
+    ]
+}
