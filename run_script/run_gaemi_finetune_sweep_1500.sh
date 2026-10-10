@@ -1,5 +1,6 @@
 #!/bin/bash
 set -uo pipefail
+export PYTHONUNBUFFERED=1
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"

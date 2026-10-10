@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 
 class ValidationRunner:
@@ -129,7 +130,12 @@ class ValidationRunner:
                     with ValidationDataLoader(**dataset) as loader:
                         limit = min(len(loader), self.max_samples) if self.max_samples else len(loader)
                         vis_indices = set(np.linspace(0, limit - 1, min(limit, self.num_vis_samples), dtype=int))
-                        for sample_index in range(limit):
+                        for sample_index in tqdm(
+                            range(limit),
+                            desc=f'Validation {name}',
+                            unit='sample',
+                            dynamic_ncols=True,
+                        ):
                             sample = loader.get()
                             if sample is None or sample.get('label_type') == 'invalid':
                                 skipped += 1
