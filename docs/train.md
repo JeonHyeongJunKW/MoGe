@@ -257,6 +257,10 @@ then add this option to the training/finetuning command:
 --val_config configs/validation/moge2.json
 ```
 
+Add `--validate_before_training True` to evaluate the loaded checkpoint once
+before the first optimizer update. This is also useful with
+`--num_iterations 0` for a validation-only pretrained baseline run.
+
 The file contains the validation settings themselves (not a surrounding
 `validation` key). Alternatively, place the same object under `validation` in
 your training JSON; `--val_config` overrides that section.

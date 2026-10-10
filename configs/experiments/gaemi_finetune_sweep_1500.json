@@ -1,0 +1,107 @@
+{
+    "base_config": "configs/train/gaemi_moge2_vits_small_augmentation.json",
+    "validation_config": "configs/validation/gaemi_moge2_vits.json",
+    "experiments": [
+        {
+            "name": "no_aug_both_lr3e6_warm200",
+            "description": "A: extend the winning no-augmentation, two-head LR 3e-6 setup to 1500 steps.",
+            "image_augmentation": [],
+            "head_lr": 3e-06,
+            "train_scale_head": true,
+            "train_points_head": true,
+            "schedule": "warmup200_constant",
+            "lr_scheduler": {
+                "type": "LambdaLR",
+                "params": {
+                    "lr_lambda": [
+                        "min(1.0, (epoch + 1) / 200)",
+                        "min(1.0, (epoch + 1) / 200)"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "no_aug_both_lr3e6_warm50",
+            "description": "B: shorten warmup from 200 to 50 steps.",
+            "image_augmentation": [],
+            "head_lr": 3e-06,
+            "train_scale_head": true,
+            "train_points_head": true,
+            "schedule": "warmup50_constant",
+            "lr_scheduler": {
+                "type": "LambdaLR",
+                "params": {
+                    "lr_lambda": [
+                        "min(1.0, (epoch + 1) / 50)",
+                        "min(1.0, (epoch + 1) / 50)"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "jitter_both_lr3e6_warm200",
+            "description": "C: add mild photometric jitter to the winning LR and two-head setup.",
+            "image_augmentation": [
+                "jittering"
+            ],
+            "head_lr": 3e-06,
+            "train_scale_head": true,
+            "train_points_head": true,
+            "schedule": "warmup200_constant",
+            "lr_scheduler": {
+                "type": "LambdaLR",
+                "params": {
+                    "lr_lambda": [
+                        "min(1.0, (epoch + 1) / 200)",
+                        "min(1.0, (epoch + 1) / 200)"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "no_aug_both_lr3e6_cosine_after1000",
+            "description": "D: warm up for 200 steps, hold LR through step 1000, then cosine-decay to 3e-7 by step 1500.",
+            "image_augmentation": [],
+            "head_lr": 3e-06,
+            "train_scale_head": true,
+            "train_points_head": true,
+            "schedule": "warmup200_constant_to1000_cosine500",
+            "lr_scheduler": {
+                "type": "SequentialLR",
+                "params": {
+                    "schedulers": [
+                        {
+                            "type": "LambdaLR",
+                            "params": {
+                                "lr_lambda": [
+                                    "min(1.0, (epoch + 1) / 200)",
+                                    "min(1.0, (epoch + 1) / 200)"
+                                ]
+                            }
+                        },
+                        {
+                            "type": "LambdaLR",
+                            "params": {
+                                "lr_lambda": [
+                                    "1.0",
+                                    "1.0"
+                                ]
+                            }
+                        },
+                        {
+                            "type": "CosineAnnealingLR",
+                            "params": {
+                                "T_max": 500,
+                                "eta_min": 3e-07
+                            }
+                        }
+                    ],
+                    "milestones": [
+                        200,
+                        1000
+                    ]
+                }
+            }
+        }
+    ]
+}

@@ -78,6 +78,7 @@ if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
 @click.option('--train_scale_head', type=bool, default=True, show_default=True, help='MoGe-2: train the metric scale MLP head; False freezes its parameters')
 @click.option('--train_points_head', type=bool, default=True, show_default=True, help='MoGe-2: train the affine-invariant point map Conv head; False freezes its parameters')
 @click.option('--val_config', type=click.Path(exists=True, dir_okay=False), default=None, help='MoGe-2 validation JSON; overrides the training config validation section')
+@click.option('--validate_before_training', type=bool, default=False, show_default=True, help='Run validation once on the loaded checkpoint before the first optimizer step')
 @click.option('--debug', 'debug_mode', type=bool, default=False, help='Enable additional debug dumps')
 @click.option('--num_iterations', type=int, default=1000000, help='Number of iterations to train the model')
 @click.option('--checkpoint_every', type=int, default=10000, help='Save a permanent checkpoint every n iterations')
@@ -106,6 +107,7 @@ def main(
     train_scale_head: bool,
     train_points_head: bool,
     val_config: Optional[str],
+    validate_before_training: bool,
     debug_mode: bool,
     num_iterations: int,
     checkpoint_every: int,
@@ -205,6 +207,17 @@ def main(
         # Hacking potential gradient synchronization issue in ROCm backend
         from moge.model.utils import sync_ddp_hook
         model.register_comm_hook(None, sync_ddp_hook)
+
+    if validate_before_training:
+        if validation is None:
+            raise ValueError('--validate_before_training requires validation configuration or --val_config')
+        # A dedicated zero-iteration run uses this to benchmark the pretrained
+        # checkpoint once per sweep without spending time repeating the same
+        # full validation in every experiment workspace.
+        validation.run(model, accelerator, config['model'], initial_step, logger)
+
+    if num_iterations == 0:
+        return
 
     # Initialize training data pipelines
     dataloader_seed = seed + accelerator.process_index
