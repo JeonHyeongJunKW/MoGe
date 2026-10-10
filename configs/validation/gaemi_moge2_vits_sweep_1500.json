@@ -1,0 +1,24 @@
+{
+    "every": 250,
+    "monitor": "depth_metric/rel",
+    "mode": "min",
+    "metric_groups": "global,metric",
+    "resolution_level": 0,
+    "max_samples": null,
+    "seed": 0,
+    "visualization": {
+        "num_samples": 8,
+        "max_points": 50000
+    },
+    "datasets": {
+        "gaemi_sim_val": {
+            "path": "/home/coder/dataset",
+            "split": ".val.txt",
+            "width": 640,
+            "height": 360,
+            "depth": "depth.png",
+            "depth_unit": 1.0,
+            "drop_max_depth": 1000.0
+        }
+    }
+}

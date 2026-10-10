@@ -1,6 +1,6 @@
 {
     "base_config": "configs/train/gaemi_moge2_vits_small_augmentation.json",
-    "validation_config": "configs/validation/gaemi_moge2_vits.json",
+    "validation_config": "configs/validation/gaemi_moge2_vits_sweep_1500.json",
     "experiments": [
         {
             "name": "no_aug_both_lr3e6_warm200",
