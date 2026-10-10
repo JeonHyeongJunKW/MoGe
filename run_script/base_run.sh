@@ -1,0 +1,24 @@
+#!/bin/bash
+python -m accelerate.commands.launch \
+--num_processes 1   \
+--module moge.train.train_moge12   \
+--config configs/train/gaemi_moge2_vits.json   \
+--val_config configs/validation/gaemi_moge2_vits.json   \
+--initial_checkpoint /home/coder/MoGe/pretrained/moge-2-vits.pt   \
+--checkpoint none   \
+--name gaemi_moge2_vits_heads_only   \
+--workspace workspace/gaemi_moge2_vits_heads_only_bs4  \
+--num_iterations 10000   \
+--batch_size_forward 4   \
+--gradient_accumulation_steps 8   \
+--enable_gradient_checkpointing True   \
+--precision mixed_bf16   \
+--train_scale_head True   \
+--train_points_head True   \
+--enable_ema True   \
+--checkpoint_every 1000   \
+--rolling_checkpoint_every 500   \
+--log_every 50   \
+--log_type tensorboard   \
+--vis_every 1000   \
+--num_vis_images 8

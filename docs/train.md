@@ -65,6 +65,9 @@ Here is a commented configuration for reference:
         "aspect_ratio_range": [0.5, 2.0],               # Range of aspect ratio of sampled images
         "area_range": [250000, 1000000],                # Range of sampled image area in pixels
         "clamp_max_depth": 1000.0,                      # Maximum far/near
+        "flip_augmentation": true,                      # Random horizontal flip
+        "perspective_warp": true,                       # Random FOV/center perspective transform
+        "resize": true,                                 # Resize samples to the selected training image size
         "center_augmentation": 0.5,                     # Ratio of center crop augmentation
         "fov_range_absolute": [1, 179],                 # Absolute range of FOV in degrees
         "fov_range_relative": [0.01, 1.0],              # Relative range of FOV to the original FOV
@@ -149,6 +152,13 @@ Here is a commented configuration for reference:
     }
 }
 ```
+
+`flip_augmentation`, `perspective_warp`, and `resize` can be overridden per
+dataset like the other augmentation settings. Setting both `perspective_warp`
+and `resize` to `false` preserves the source image geometry, depth samples, and
+intrinsics without remapping; `image_augmentation` remains independent. In that
+mode, samples grouped into one batch must have matching source dimensions so
+they can be stacked.
 
 ## Run Training 
 

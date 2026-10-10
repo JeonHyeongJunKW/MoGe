@@ -457,7 +457,7 @@ def main(
             records.append({'time/step': timer_step.time})
             lr_scheduler.step()
 
-            # EMA update  
+            # EMA update
             if enable_ema and accelerator.is_main_process and accelerator.sync_gradients:
                 ema_model.update_parameters(model)
 
@@ -479,8 +479,8 @@ def main(
                 save_data_pipeline_states(workspace, i_step, accelerator, data_pipelines)
 
             # Print data pipeline profile every 100 steps
-            if accelerator.is_main_process and i_step > 0 and i_step % 100 == 0:
-                pbar.write(f'[Step {i_step}] train data pipeline profile:\n{train_data_pipe.profile()}')
+            # if accelerator.is_main_process and i_step > 0 and i_step % 100 == 0:
+            #     pbar.write(f'[Step {i_step}] train data pipeline profile:\n{train_data_pipe.profile()}')
 
 
             # Visualize

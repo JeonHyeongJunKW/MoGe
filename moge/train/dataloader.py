@@ -103,6 +103,12 @@ class TrainDataLoaderPipeline:
         self.fov_range_relative = config.get('fov_range_relative', 0.0)
         self.center_augmentation = config.get('center_augmentation', 0.0)
         self.image_augmentation = config.get('image_augmentation', [])
+        # Keep these switches independent so a dataset can opt into a plain
+        # resize without a perspective crop, or preserve the source pixels
+        # entirely. Defaults retain the historical behavior for old configs.
+        self.flip_augmentation = config.get('flip_augmentation', True)
+        self.perspective_warp = config.get('perspective_warp', True)
+        self.resize = config.get('resize', True)
         self.depth_interpolation = config.get('depth_interpolation', 'bilinear')
         # Reject-and-resample: if the warped finite-depth ratio (probed at low
         # resolution) falls below ``min_valid_after_warp``, we resample the
@@ -280,70 +286,90 @@ class TrainDataLoaderPipeline:
             raw_normal = np.where(raw_normal_mask[..., None], raw_normal, np.nan)
             depth_unit = self.datasets[instance['dataset']].get('depth_unit', None)
 
-            tgt_width, tgt_height = instance['width'], instance['height']
+            ds_cfg = self.datasets[instance['dataset']]
+            flip_augmentation = ds_cfg.get('flip_augmentation', self.flip_augmentation)
+            perspective_warp = ds_cfg.get('perspective_warp', self.perspective_warp)
+            resize = ds_cfg.get('resize', self.resize)
+
+            raw_height, raw_width = raw_image.shape[:2]
+            if resize:
+                tgt_width, tgt_height = instance['width'], instance['height']
+            else:
+                tgt_width, tgt_height = raw_width, raw_height
+                # Collation and invalid-sample replacement use these fields as
+                # the actual processed tensor size.
+                instance['width'], instance['height'] = tgt_width, tgt_height
             tgt_aspect = tgt_width / tgt_height
             
             rng = np.random.default_rng(instance['seed'])
 
-            # Sample perspective transformation with reject-and-resample on the
-            # coarse warped finite-depth ratio. This avoids spending the
-            # expensive full-res warp budget on viewpoints that land entirely
-            # in NaN regions (sky / empty background).
-            ds_cfg = self.datasets[instance['dataset']]
-            min_valid_after_warp = ds_cfg.get('min_valid_after_warp', self.min_valid_after_warp)
-            max_resample_retries = ds_cfg.get('resample_max_retries', self.resample_max_retries)
-            raw_finite_mask = np.isfinite(raw_depth)
-            probe_h = 64
-            probe_w = max(1, int(round(probe_h * tgt_aspect)))
+            if perspective_warp:
+                # Sample perspective transformation with reject-and-resample on
+                # the coarse warped finite-depth ratio. This avoids spending the
+                # expensive full-res warp budget on viewpoints that land entirely
+                # in NaN regions (sky / empty background).
+                min_valid_after_warp = ds_cfg.get('min_valid_after_warp', self.min_valid_after_warp)
+                max_resample_retries = ds_cfg.get('resample_max_retries', self.resample_max_retries)
+                raw_finite_mask = np.isfinite(raw_depth)
+                probe_h = 64
+                probe_w = max(1, int(round(probe_h * tgt_aspect)))
 
-            best = {'ratio': -1.0, 'tgt_intrinsics': None, 'R': None, 'transform': None}
-            for _attempt in range(max_resample_retries + 1):
-                tgt_intrinsics_try, R_try = sample_perspective(
-                    raw_intrinsics,
-                    tgt_aspect=tgt_aspect,
-                    center_augmentation=ds_cfg.get('center_augmentation', self.center_augmentation),
-                    fov_range_absolute=ds_cfg.get('fov_range_absolute', self.fov_range_absolute),
-                    fov_range_relative=ds_cfg.get('fov_range_relative', self.fov_range_relative),
-                    rng=rng,
-                )
-                transform_try = tgt_intrinsics_try @ R_try @ np.linalg.inv(raw_intrinsics)
-                probe = warp_perspective(
-                    raw_finite_mask.astype(np.uint8), transform_try,
-                    (probe_h, probe_w), interpolation='nearest',
-                )
-                ratio = float(probe.mean())
-                if ratio > best['ratio']:
-                    best.update(ratio=ratio, tgt_intrinsics=tgt_intrinsics_try, R=R_try, transform=transform_try)
-                if ratio >= min_valid_after_warp:
-                    break
-            tgt_intrinsics, R, transform = best['tgt_intrinsics'], best['R'], best['transform']
+                best = {'ratio': -1.0, 'tgt_intrinsics': None, 'R': None, 'transform': None}
+                for _attempt in range(max_resample_retries + 1):
+                    tgt_intrinsics_try, R_try = sample_perspective(
+                        raw_intrinsics,
+                        tgt_aspect=tgt_aspect,
+                        center_augmentation=ds_cfg.get('center_augmentation', self.center_augmentation),
+                        fov_range_absolute=ds_cfg.get('fov_range_absolute', self.fov_range_absolute),
+                        fov_range_relative=ds_cfg.get('fov_range_relative', self.fov_range_relative),
+                        rng=rng,
+                    )
+                    transform_try = tgt_intrinsics_try @ R_try @ np.linalg.inv(raw_intrinsics)
+                    probe = warp_perspective(
+                        raw_finite_mask.astype(np.uint8), transform_try,
+                        (probe_h, probe_w), interpolation='nearest',
+                    )
+                    ratio = float(probe.mean())
+                    if ratio > best['ratio']:
+                        best.update(ratio=ratio, tgt_intrinsics=tgt_intrinsics_try, R=R_try, transform=transform_try)
+                    if ratio >= min_valid_after_warp:
+                        break
+                tgt_intrinsics, R, transform = best['tgt_intrinsics'], best['R'], best['transform']
+            else:
+                tgt_intrinsics = raw_intrinsics.copy()
+                R = np.eye(3, dtype=np.float32)
+                transform = np.eye(3, dtype=np.float32)
 
-            # Warp
-            # - Warp image
-            tgt_image = warp_perspective(raw_image, transform, tgt_size=(tgt_height, tgt_width), interpolation='lanczos')
-            # - Warp depth
-            depth_edge_mask = utils3d.np.depth_map_edge(raw_depth, mask=np.isfinite(raw_depth), kernel_size=5, ltol=0.01)
-            depth_bilinear_mask = np.isfinite(raw_depth) & ~depth_edge_mask
-            warped_depth_bilinear_mask = warp_perspective(depth_bilinear_mask.astype(np.float32), transform, (tgt_height, tgt_width), interpolation='bilinear')
-            warped_depth_nearest = warp_perspective(raw_depth, transform, (tgt_height, tgt_width), interpolation='nearest', sparse_mask=~np.isnan(raw_depth))
-            warped_depth_bilinear = 1 / warp_perspective(1 / raw_depth, transform, (tgt_height, tgt_width), interpolation='bilinear')   # NOTE: Bilinear intepolation in disparity space maintains planar surfaces.
-            warped_depth = np.where(warped_depth_bilinear_mask == 1., warped_depth_bilinear, warped_depth_nearest)
-            # check if there is any zero in warped depth
-            if np.any(warped_depth == 0):
-                try:
-                    print(f"Zero depth encountered for instance {instance['path']}. Dumping data.")
-                    dump_path = self.workspace / 'failed_warp_dumps' / f"{instance['dataset']}_{instance['filename'].replace('/', '_')}.npz"
-                    dump_path.parent.mkdir(parents=True, exist_ok=True)
-                    np.savez_compressed(dump_path, raw_image=raw_image, raw_depth=raw_depth, transform=transform, tgt_size=(tgt_height, tgt_width), warped_depth=warped_depth)
-                except Exception as e:
-                    print("Failed to dump warp data because of:", e)
-                # fix zeros
-                warped_depth = np.where(warped_depth > 0, warped_depth, np.nan)
-            tgt_uvhomo = np.concatenate([utils3d.np.uv_map((tgt_height, tgt_width)), np.ones((tgt_height, tgt_width, 1), dtype=np.float32)], axis=-1)
-            tgt_depth = warped_depth / np.dot(tgt_uvhomo, np.linalg.inv(transform)[2, :])
-            # - Warp normal
-            warped_normal = warp_perspective(raw_normal, transform, (tgt_height, tgt_width), interpolation='bilinear')
-            tgt_normal = warped_normal @ R.T
+            if not perspective_warp and not resize:
+                # True pass-through: avoid even an identity remap so source
+                # pixels and depth samples remain unchanged.
+                tgt_image = raw_image
+                tgt_depth = raw_depth
+                tgt_normal = raw_normal
+            else:
+                # Warp and/or resize.
+                tgt_image = warp_perspective(raw_image, transform, tgt_size=(tgt_height, tgt_width), interpolation='lanczos')
+                depth_edge_mask = utils3d.np.depth_map_edge(raw_depth, mask=np.isfinite(raw_depth), kernel_size=5, ltol=0.01)
+                depth_bilinear_mask = np.isfinite(raw_depth) & ~depth_edge_mask
+                warped_depth_bilinear_mask = warp_perspective(depth_bilinear_mask.astype(np.float32), transform, (tgt_height, tgt_width), interpolation='bilinear')
+                warped_depth_nearest = warp_perspective(raw_depth, transform, (tgt_height, tgt_width), interpolation='nearest', sparse_mask=~np.isnan(raw_depth))
+                warped_depth_bilinear = 1 / warp_perspective(1 / raw_depth, transform, (tgt_height, tgt_width), interpolation='bilinear')   # NOTE: Bilinear interpolation in disparity space maintains planar surfaces.
+                warped_depth = np.where(warped_depth_bilinear_mask == 1., warped_depth_bilinear, warped_depth_nearest)
+                # check if there is any zero in warped depth
+                if np.any(warped_depth == 0):
+                    try:
+                        print(f"Zero depth encountered for instance {instance['path']}. Dumping data.")
+                        dump_path = self.workspace / 'failed_warp_dumps' / f"{instance['dataset']}_{instance['filename'].replace('/', '_')}.npz"
+                        dump_path.parent.mkdir(parents=True, exist_ok=True)
+                        np.savez_compressed(dump_path, raw_image=raw_image, raw_depth=raw_depth, transform=transform, tgt_size=(tgt_height, tgt_width), warped_depth=warped_depth)
+                    except Exception as e:
+                        print("Failed to dump warp data because of:", e)
+                    # fix zeros
+                    warped_depth = np.where(warped_depth > 0, warped_depth, np.nan)
+                tgt_uvhomo = np.concatenate([utils3d.np.uv_map((tgt_height, tgt_width)), np.ones((tgt_height, tgt_width, 1), dtype=np.float32)], axis=-1)
+                tgt_depth = warped_depth / np.dot(tgt_uvhomo, np.linalg.inv(transform)[2, :])
+                warped_normal = warp_perspective(raw_normal, transform, (tgt_height, tgt_width), interpolation='bilinear')
+                tgt_normal = warped_normal @ R.T
 
             # always make sure that mask is not empty
             if np.isfinite(tgt_depth).sum() / tgt_depth.size < 0.001:
@@ -358,7 +384,7 @@ class TrainDataLoaderPipeline:
                     # print("Failed to dump insufficient depth data because of:", e)
 
             # Flip augmentation
-            if rng.choice([True, False]):
+            if flip_augmentation and rng.choice([True, False]):
                 tgt_image = np.flip(tgt_image, axis=1).copy()
                 tgt_depth = np.flip(tgt_depth, axis=1).copy()
                 tgt_normal = np.flip(tgt_normal, axis=1).copy() * [-1, 1, 1]

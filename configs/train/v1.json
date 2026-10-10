@@ -9,6 +9,9 @@
             1000000
         ],
         "clamp_max_depth": 1000.0,
+        "flip_augmentation": true,
+        "perspective_warp": true,
+        "resize": true,
         "center_augmentation": 0.5,
         "fov_range_absolute": [
             1,

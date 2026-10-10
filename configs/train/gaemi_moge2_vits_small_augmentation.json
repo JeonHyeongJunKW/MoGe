@@ -10,19 +10,16 @@
         "flip_augmentation": false,
         "perspective_warp": false,
         "resize": false,
-        "center_augmentation": 0.25,
+        "center_augmentation": 0.0,
         "fov_range_absolute": [
             1,
             179
         ],
         "fov_range_relative": [
-            0.8,
+            1.0,
             1.0
         ],
         "image_augmentation": [
-            "jittering",
-            "jpeg_loss",
-            "blurring"
         ],
         "min_valid_after_warp": 0.01,
         "resample_max_retries": 8,
