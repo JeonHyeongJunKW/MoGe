@@ -1,5 +1,5 @@
 
-# Training 
+# Training
 
 This document provides instructions for training and finetuning the MoGe model.
 
@@ -23,7 +23,7 @@ Each dataset should be organized as follows:
 ```
 somedataset
 ├── .index.txt          # A list of instance paths
-├── folder1 
+├── folder1
 │   ├── instance1       # Each instance is in a folder
 │   │   ├── image.jpg   # RGB image.
 │   │   ├── depth.png   # 16-bit depth. See moge/utils/io.py for details
@@ -56,7 +56,7 @@ Our training dataloaders is customized to handle loading data, performing perspe
 
 ## Configuration
 
-See [`configs/train/v1.json`](../configs/train/v1.json) for an example configuration file. The configuration file defines the hyperparameters for training the MoGe model. 
+See [`configs/train/v1.json`](../configs/train/v1.json) for an example configuration file. The configuration file defines the hyperparameters for training the MoGe model.
 Here is a commented configuration for reference:
 
 ```json
@@ -72,7 +72,7 @@ Here is a commented configuration for reference:
         "fov_range_absolute": [1, 179],                 # Absolute range of FOV in degrees
         "fov_range_relative": [0.01, 1.0],              # Relative range of FOV to the original FOV
         "image_augmentation": ["jittering", "jpeg_loss", "blurring"],       # List of image augmentation techniques
-        "datasets": [ 
+        "datasets": [
             {
                 "name": "TartanAir",                    # Name of the dataset. Name it as you like.
                 "path": "data/TartanAir",               # Path to the dataset
@@ -160,9 +160,9 @@ intrinsics without remapping; `image_augmentation` remains independent. In that
 mode, samples grouped into one batch must have matching source dimensions so
 they can be stacked.
 
-## Run Training 
+## Run Training
 
-Launch the training script [`moge/train/train_moge12.py`](../moge/train/train_moge12.py) as a module from the repository root. It trains both MoGe-1 and MoGe-2; which one you get is decided by `model_version` in the config. Note that we use [`accelerate`](https://github.com/huggingface/accelerate) for distributed training. 
+Launch the training script [`moge/train/train_moge12.py`](../moge/train/train_moge12.py) as a module from the repository root. It trains both MoGe-1 and MoGe-2; which one you get is decided by `model_version` in the config. Note that we use [`accelerate`](https://github.com/huggingface/accelerate) for distributed training.
 
 ```bash
 uv run accelerate launch \
@@ -179,7 +179,7 @@ uv run accelerate launch \
     --log_every 100 \
     --log_type tensorboard \
     --log_type wandb \
-    --vis_every 1000 
+    --vis_every 1000
 ```
 
 
@@ -187,9 +187,9 @@ uv run accelerate launch \
 
 To finetune the pre-trained MoGe model, first download the model checkpoint and put it in a local directory, e.g. `pretrained/moge-vitl.pt`, then pass that checkpoint with `--initial_checkpoint`.
 
-> NOTE: when finetuning pretrained MoGe model, a much lower learning rate is required. 
-The suggested learning rate for finetuning is not greater than 1e-5 for the head and 1e-6 for the backbone. 
-And the batch size is recommended to be 32 at least. 
+> NOTE: when finetuning pretrained MoGe model, a much lower learning rate is required.
+The suggested learning rate for finetuning is not greater than 1e-5 for the head and 1e-6 for the backbone.
+And the batch size is recommended to be 32 at least.
 The settings in default configuration are not optimal for specific datasets and may require further tuning.
 
 ```bash
@@ -207,7 +207,7 @@ uv run accelerate launch \
     --log_every 100 \
     --log_type tensorboard \
     --log_type wandb \
-    --vis_every 1000 
+    --vis_every 1000
 ```
 
 
@@ -272,6 +272,7 @@ your training JSON; `--val_config` overrides that section.
     "mode": "min",
     "metric_groups": "global,metric",
     "resolution_level": 9,
+    "batch_size": 16,
     "max_samples": null,
     "seed": 0,
     "datasets": {
@@ -303,6 +304,9 @@ rather than neighboring frames to avoid train/validation overlap.
 - `max_samples`: first N indexed samples **per dataset** after any `subset`
   stride; `null` evaluates all samples. Ordering and preprocessing are fixed,
   with no training augmentation. `resolution_level` controls inference tokens.
+- `batch_size`: number of same-sized validation images inferred together. It
+  defaults to `1`; increase it when GPU memory permits. Metrics and exports are
+  still computed per image.
 - `depth_unit`: conversion to meters; use `1.0` for meter-valued depth. Relative
   datasets may omit it and use an invariant monitor such as
   `depth_affine_invariant/rel`. Validation also applies `metric_scale` or
@@ -372,7 +376,7 @@ exports reuse validation inference and do not change the full-resolution metrics
 
 ## Training MoGe-3
 
-MoGe-3 is trained upon a pretrained MoGe-2 checkpoint. 
+MoGe-3 is trained upon a pretrained MoGe-2 checkpoint.
 
 ```bash
 uv run accelerate launch \
@@ -390,7 +394,7 @@ uv run accelerate launch \
     --log_every 100 \
     --log_type tensorboard \
     --log_type wandb \
-    --vis_every 1000 
+    --vis_every 1000
 ```
 
 The MoGe-3 training config carries a few extra keys:

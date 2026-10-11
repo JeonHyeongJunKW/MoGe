@@ -29,8 +29,13 @@ class TinyModel(torch.nn.Module):
         random.random()
         np.random.rand()
         torch.rand(1)
-        depth = torch.ones(2, 2) * self.weight
-        return {'depth': depth, 'points': depth[..., None].expand(2, 2, 3), 'intrinsics': torch.eye(3)}
+        batch_size = image.shape[0]
+        depth = torch.ones(batch_size, 2, 2) * self.weight
+        return {
+            'depth': depth,
+            'points': depth[..., None].expand(batch_size, 2, 2, 3),
+            'intrinsics': torch.eye(3).expand(batch_size, 3, 3),
+        }
 
 
 class ValidationTests(unittest.TestCase):
@@ -111,7 +116,7 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(runner.is_due(0, 5))
         self.assertTrue(runner.is_due(1, 5))
         self.assertTrue(runner.is_due(4, 5))
-        for overrides in ({'every': 0}, {'max_samples': 0}, {'mode': 'other'},
+        for overrides in ({'every': 0}, {'max_samples': 0}, {'batch_size': 0}, {'mode': 'other'},
                           {'resolution_level': 10}, {'datasets': {}}, {'everry': 1}):
             with self.assertRaises(ValueError):
                 self.runner({**self.config, **overrides})
@@ -154,6 +159,15 @@ class ValidationTests(unittest.TestCase):
             result = self.runner(cfg).evaluate(self.model, torch.device('cpu'))
         self.assertAlmostEqual(result['mean']['depth_metric/rel'], (.5 + .75) / 2)
         self.assertEqual(result['val']['num_samples'], 1)
+
+    def test_batched_inference_preserves_per_sample_metrics(self):
+        cfg = {**self.config, 'batch_size': 2}
+        deps, _ = self.fake_dependencies()
+        with deps:
+            result = self.runner(cfg).evaluate(self.model, torch.device('cpu'))
+        self.assertEqual(self.model.calls, 1)
+        self.assertAlmostEqual(result['mean']['depth_metric/rel'], .625)
+        self.assertEqual(result['val']['num_samples'], 2)
 
     def test_invalid_samples_and_failure_restore_state(self):
         for invalid, fail in ((True, False), (False, True)):

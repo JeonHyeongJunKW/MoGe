@@ -20,6 +20,7 @@ class ValidationRunner:
         self.mode = config.get('mode', 'min')
         self.max_samples = config.get('max_samples')
         self.resolution_level = config.get('resolution_level', 9)
+        self.batch_size = config.get('batch_size', 1)
         self.seed = config.get('seed', 0)
         self.datasets = config.get('datasets', {})
         visualization = config.get('visualization', {})
@@ -31,7 +32,7 @@ class ValidationRunner:
             raise ValueError('validation.visualization.num_samples must be a non-negative integer')
         if type(self.vis_max_points) is not int or self.vis_max_points < 1:
             raise ValueError('validation.visualization.max_points must be a positive integer')
-        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'seed', 'datasets', 'metric_groups', 'visualization'}
+        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization'}
         if unknown:
             raise ValueError(f'Unknown validation options: {sorted(unknown)}')
         if type(self.seed) is not int or not 0 <= self.seed < 2 ** 32:
@@ -46,6 +47,8 @@ class ValidationRunner:
             raise ValueError('validation.max_samples must be null or a positive integer')
         if type(self.resolution_level) is not int or not 0 <= self.resolution_level <= 9:
             raise ValueError('validation.resolution_level must be an integer from 0 to 9')
+        if type(self.batch_size) is not int or self.batch_size < 1:
+            raise ValueError('validation.batch_size must be a positive integer')
         if not isinstance(self.datasets, dict) or not self.datasets:
             raise ValueError('validation.datasets must be a non-empty mapping of names to evaluation configs')
         # Include split contents so resumed runs cannot compare different validation sets.
@@ -130,44 +133,66 @@ class ValidationRunner:
                     with ValidationDataLoader(**dataset) as loader:
                         limit = min(len(loader), self.max_samples) if self.max_samples else len(loader)
                         vis_indices = set(np.linspace(0, limit - 1, min(limit, self.num_vis_samples), dtype=int))
-                        for sample_index in tqdm(
-                            range(limit),
+                        for batch_start in tqdm(
+                            range(0, limit, self.batch_size),
+                            total=math.ceil(limit / self.batch_size),
                             desc=f'Validation {name}',
-                            unit='sample',
+                            unit='batch',
                             dynamic_ncols=True,
                         ):
-                            sample = loader.get()
-                            if sample is None or sample.get('label_type') == 'invalid':
-                                skipped += 1
+                            batch_samples = []
+                            batch_indices = []
+                            batch_end = min(batch_start + self.batch_size, limit)
+                            for sample_index in range(batch_start, batch_end):
+                                sample = loader.get()
+                                if sample is None or sample.get('label_type') == 'invalid':
+                                    skipped += 1
+                                    continue
+                                sample = {
+                                    k: v.to(device) if isinstance(v, torch.Tensor) else v
+                                    for k, v in sample.items()
+                                }
+                                sample['depth_mask'] &= torch.isfinite(sample['depth']) & (sample['depth'] > 0)
+                                if not sample['depth_mask'].any():
+                                    skipped += 1
+                                    continue
+                                batch_samples.append(sample)
+                                batch_indices.append(sample_index)
+
+                            if not batch_samples:
                                 continue
-                            sample = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in sample.items()}
-                            sample['depth_mask'] &= torch.isfinite(sample['depth']) & (sample['depth'] > 0)
-                            if not sample['depth_mask'].any():
-                                skipped += 1
-                                continue
-                            output = model.infer(sample['image'], resolution_level=self.resolution_level,
-                                                 apply_mask=False, use_fp16=False)
-                            for key in ('depth', 'points'):
-                                if not torch.isfinite(output[key][sample['depth_mask']]).all():
-                                    raise ValueError(f'Non-finite validation prediction: {name}/{sample["filename"]}/{key}')
-                            if step is not None and sample_index in vis_indices:
-                                from .validation_visualization import save_validation_point_clouds
-                                save_validation_point_clouds(
-                                    self.workspace / 'validation' / f'step_{step:08d}' / name / f'{sample_index:06d}',
-                                    sample, output, self.vis_max_points,
-                                )
-                            pred = {'depth_metric': output['depth'], 'points_metric': output['points'],
-                                    'intrinsics': output['intrinsics']}
-                            metrics, _ = compute_metrics(pred, sample, mg=self.config.get('metric_groups', 'global,metric'))
-                            for group, values in metrics.items():
-                                for key, value in values.items():
-                                    value = float(value)
-                                    if not math.isfinite(value):
-                                        raise ValueError(f'Non-finite validation metric: {name}/{group}/{key}')
-                                    metric = f'{group}/{key}'
-                                    sums[metric] += value
-                                    metric_counts[metric] += 1
-                            evaluated += 1
+
+                            batch_output = model.infer(
+                                torch.stack([sample['image'] for sample in batch_samples]),
+                                resolution_level=self.resolution_level,
+                                apply_mask=False, use_fp16=False,
+                            )
+                            for batch_index, (sample_index, sample) in enumerate(zip(batch_indices, batch_samples)):
+                                output = {
+                                    key: value[batch_index] if isinstance(value, torch.Tensor) else value
+                                    for key, value in batch_output.items()
+                                }
+                                for key in ('depth', 'points'):
+                                    if not torch.isfinite(output[key][sample['depth_mask']]).all():
+                                        raise ValueError(f'Non-finite validation prediction: {name}/{sample["filename"]}/{key}')
+                                if step is not None and sample_index in vis_indices:
+                                    from .validation_visualization import save_validation_point_clouds
+                                    save_validation_point_clouds(
+                                        self.workspace / 'validation' / f'step_{step:08d}' / name / f'{sample_index:06d}',
+                                        sample, output, self.vis_max_points,
+                                    )
+                                pred = {'depth_metric': output['depth'], 'points_metric': output['points'],
+                                        'intrinsics': output['intrinsics']}
+                                metrics, _ = compute_metrics(pred, sample, mg=self.config.get('metric_groups', 'global,metric'))
+                                for group, values in metrics.items():
+                                    for key, value in values.items():
+                                        value = float(value)
+                                        if not math.isfinite(value):
+                                            raise ValueError(f'Non-finite validation metric: {name}/{group}/{key}')
+                                        metric = f'{group}/{key}'
+                                        sums[metric] += value
+                                        metric_counts[metric] += 1
+                                evaluated += 1
                     if not evaluated or not metric_counts:
                         raise ValueError(f'Validation dataset {name} has no evaluable samples/metrics')
                     results[name] = {key: sums[key] / metric_counts[key] for key in sums}
