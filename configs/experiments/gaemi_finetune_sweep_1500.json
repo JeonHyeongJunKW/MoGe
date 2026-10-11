@@ -102,6 +102,26 @@
                     ]
                 }
             }
+        },
+        {
+            "name": "no_aug_split_scale1e5_points3e6_warm200",
+            "description": "E: train scale head at 1e-5 and points head at 3e-6 to accelerate metric-scale adaptation while preserving geometry.",
+            "image_augmentation": [],
+            "scale_head_lr": 1e-05,
+            "points_head_lr": 3e-06,
+            "train_scale_head": true,
+            "train_points_head": true,
+            "schedule": "warmup200_constant_split_lr",
+            "lr_scheduler": {
+                "type": "LambdaLR",
+                "params": {
+                    "lr_lambda": [
+                        "min(1.0, (epoch + 1) / 200)",
+                        "min(1.0, (epoch + 1) / 200)",
+                        "min(1.0, (epoch + 1) / 200)"
+                    ]
+                }
+            }
         }
     ]
 }

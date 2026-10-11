@@ -139,12 +139,40 @@ config = copy.deepcopy(json.loads(Path(manifest['base_config']).read_text(encodi
 
 config['data']['image_augmentation'] = experiment['image_augmentation']
 config['lr_scheduler'] = copy.deepcopy(experiment['lr_scheduler'])
-for group in config['optimizer']['params']:
-    if group.get('name') == 'head':
-        group['lr'] = experiment['head_lr']
-        break
+
+if 'scale_head_lr' in experiment or 'points_head_lr' in experiment:
+    if not {'scale_head_lr', 'points_head_lr'} <= set(experiment):
+        raise KeyError('Split-head experiments require both scale_head_lr and points_head_lr')
+    head_group = next(
+        (group for group in config['optimizer']['params'] if group.get('name') == 'head'),
+        None,
+    )
+    if head_group is None:
+        raise KeyError('Optimizer group named "head" was not found')
+    other_groups = [
+        copy.deepcopy(group) for group in config['optimizer']['params']
+        if group.get('name') != 'head'
+    ]
+    scale_group = copy.deepcopy(head_group)
+    scale_group.update(
+        name='scale_head',
+        params={'include': ['*scale_head.*']},
+        lr=experiment['scale_head_lr'],
+    )
+    points_group = copy.deepcopy(head_group)
+    points_group.update(
+        name='points_head',
+        params={'include': ['*points_head.*']},
+        lr=experiment['points_head_lr'],
+    )
+    config['optimizer']['params'] = [scale_group, points_group, *other_groups]
 else:
-    raise KeyError('Optimizer group named "head" was not found')
+    for group in config['optimizer']['params']:
+        if group.get('name') == 'head':
+            group['lr'] = experiment['head_lr']
+            break
+    else:
+        raise KeyError('Optimizer group named "head" was not found')
 
 config['sweep_experiment'] = {
     'name': experiment['name'],
@@ -152,6 +180,8 @@ config['sweep_experiment'] = {
     'train_scale_head': experiment['train_scale_head'],
     'train_points_head': experiment['train_points_head'],
     'schedule': experiment['schedule'],
+    'scale_head_lr': experiment.get('scale_head_lr', experiment.get('head_lr')),
+    'points_head_lr': experiment.get('points_head_lr', experiment.get('head_lr')),
 }
 output_path.parent.mkdir(parents=True, exist_ok=True)
 output_path.write_text(json.dumps(config, indent=4) + '\n', encoding='utf-8')
@@ -224,7 +254,8 @@ rows.append({
     'exit_code': (baseline_dir / 'exit_code').read_text().strip() if (baseline_dir / 'exit_code').exists() else 'not_run',
     'augmentations': 'none',
     'schedule': 'none',
-    'head_lr': '',
+    'scale_head_lr': '',
+    'points_head_lr': '',
     'best_step': 'initial' if baseline else '',
     'best_depth_rel': baseline.get('score', '') if baseline else '',
     'best_depth_delta1': baseline_metrics.get('depth_metric/delta1', ''),
@@ -247,7 +278,8 @@ for experiment in manifest['experiments']:
         'exit_code': exit_code_path.read_text().strip() if exit_code_path.exists() else 'not_run',
         'augmentations': ','.join(experiment['image_augmentation']) or 'none',
         'schedule': experiment['schedule'],
-        'head_lr': experiment['head_lr'],
+        'scale_head_lr': experiment.get('scale_head_lr', experiment.get('head_lr', '')),
+        'points_head_lr': experiment.get('points_head_lr', experiment.get('head_lr', '')),
         'best_step': best.get('step', '') if best else '',
         'best_depth_rel': best.get('score', '') if best else '',
         'best_depth_delta1': best_metrics.get('depth_metric/delta1', ''),
@@ -262,7 +294,7 @@ with (sweep_root / 'summary.csv').open('w', newline='', encoding='utf-8') as out
     writer.writeheader()
     writer.writerows(rows)
 
-headers = ['experiment', 'status', 'aug', 'schedule', 'lr', 'best step', 'best rel', 'best delta1', 'latest rel']
+headers = ['experiment', 'status', 'aug', 'schedule', 'scale lr', 'points lr', 'best step', 'best rel', 'best delta1', 'latest rel']
 markdown = [
     '| ' + ' | '.join(headers) + ' |',
     '| ' + ' | '.join(['---'] * len(headers)) + ' |',
@@ -272,13 +304,15 @@ def number(value):
     return f'{float(value):.6g}' if value != '' else '-'
 
 for row in rows:
-    lr = f"{float(row['head_lr']):.1e}" if row['head_lr'] != '' else '-'
+    scale_lr = f"{float(row['scale_head_lr']):.1e}" if row['scale_head_lr'] != '' else '-'
+    points_lr = f"{float(row['points_head_lr']):.1e}" if row['points_head_lr'] != '' else '-'
     markdown.append('| ' + ' | '.join([
         row['experiment'],
         'ok' if row['exit_code'] == '0' else f"failed({row['exit_code']})",
         row['augmentations'],
         row['schedule'],
-        lr,
+        scale_lr,
+        points_lr,
         str(row['best_step']) if row['best_step'] != '' else '-',
         number(row['best_depth_rel']),
         number(row['best_depth_delta1']),
