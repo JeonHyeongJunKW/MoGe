@@ -65,12 +65,15 @@ def execute(command, directory, dry_run):
     print(shlex.join(command), flush=True)
     if dry_run:
         return 0
-    with (directory / 'run.log').open('w', encoding='utf-8') as log:
+    # tqdm redraws with carriage returns. Text-mode universal-newline decoding
+    # turns those into newlines, so relay raw bytes without line buffering.
+    with (directory / 'run.log').open('wb') as log:
         with subprocess.Popen(command, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, bufsize=1) as process:
-            for line in process.stdout:
-                print(line, end='', flush=True)
-                log.write(line)
+                              text=False) as process:
+            for chunk in iter(lambda: process.stdout.read1(65536), b''):
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                log.write(chunk)
                 log.flush()
             code = process.wait()
     (directory / 'exit_code').write_text(str(code) + '\n')

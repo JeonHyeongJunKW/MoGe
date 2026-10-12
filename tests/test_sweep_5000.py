@@ -2,6 +2,7 @@ import copy
 import fnmatch
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,21 @@ from run_script.sweep_5000 import REPO, resolve_experiment
 
 
 class SweepTests(unittest.TestCase):
+    def test_progress_carriage_returns_and_exit_code_are_preserved(self):
+        payload = '\rValidation 0/2\rValidation 1/2\rValidation 2/2\n완료\n'.encode()
+        with tempfile.TemporaryDirectory() as temporary:
+            child = [sys.executable, '-c', f'import os; os.write(1, {payload!r}); raise SystemExit(3)']
+            relay = (
+                'from pathlib import Path\n'
+                'from run_script.sweep_5000 import execute\n'
+                f'raise SystemExit(execute({child!r}, Path({temporary!r}), False))\n'
+            )
+            result = subprocess.run([sys.executable, '-c', relay], cwd=REPO, capture_output=True)
+            self.assertEqual(result.returncode, 3)
+            self.assertTrue(result.stdout.endswith(payload), result.stdout)
+            self.assertEqual((Path(temporary) / 'run.log').read_bytes(), payload)
+            self.assertEqual((Path(temporary) / 'exit_code').read_text().strip(), '3')
+
     def setUp(self):
         self.manifest = json.loads((REPO / 'configs/experiments/gaemi_finetune_sweep_5000.json').read_text())
         self.base = json.loads((REPO / self.manifest['base_config']).read_text())
