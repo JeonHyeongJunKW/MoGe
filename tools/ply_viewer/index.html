@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MoGe · PLY comparison</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><div><span class="eyebrow">MoGe / VALIDATION</span><h1>GT & Prediction</h1></div><span class="badge">원본 좌표 · 스케일 유지</span></header>
+<main>
+<section class="toolbar">
+<label>결과 검색<input id="search" type="search" placeholder="실험명, step 또는 샘플 번호"></label>
+<label class="grow">서버 결과<select id="sample"><option value="">결과를 선택하세요</option></select></label>
+<button id="refresh">새로고침</button><button id="prev" aria-label="이전 샘플">←</button><button id="next" aria-label="다음 샘플">→</button><button id="load">불러오기</button>
+</section>
+<div class="dropzones"><div data-slot="0" tabindex="0">GT PLY를 여기에 드롭 <small id="gtDropName">gt.ply</small></div><div data-slot="1" tabindex="0">Prediction PLY를 여기에 드롭 <small id="predDropName">pred.ply</small></div></div>
+<p class="hint">gt.ply + pred.ply를 함께 화면에 드롭하면 자동으로 비교합니다. 다른 이름의 두 파일은 첫 번째를 GT로 사용합니다.</p>
+<details><summary>내 컴퓨터의 PLY 파일 열기</summary><div class="toolbar"><label>GT PLY<input type="file" id="gtFile" accept=".ply"></label><label>Prediction PLY<input type="file" id="predFile" accept=".ply"></label><button id="local">파일 비교</button><span>파일은 브라우저에서만 읽습니다.</span></div></details>
+<section class="toolbar controls">
+<label>보기<select id="mode"><option value="split">나란히 · 카메라 동기화</option><option value="overlay">겹쳐 보기 · GT 청록 / Pred 주황</option></select></label>
+<label>색상<select id="color"><option value="rgb">원본 RGB</option><option value="solid">GT 청록 / Pred 주황</option></select></label>
+<label>점 크기 <input id="size" type="range" min="1" max="7" step="0.5" value="2"></label>
+<label>최대 깊이 (원본 단위)<input id="depth" type="number" min="0" step="any" placeholder="제한 없음"></label>
+<label><input type="checkbox" id="showGT" checked> GT</label><label><input type="checkbox" id="showPred" checked> Prediction</label>
+<label><input type="checkbox" id="showAxes" checked> 카메라 XYZ축</label><label>축 길이 (원본 단위)<input id="axisLength" type="number" min="0.001" step="any" value="1"></label><button id="fit">전체 맞춤</button><button id="front">정면</button>
+</section>
+<p class="hint">드래그: 트랙볼 회전 (가장자리에서 롤) · Shift+드래그 / 우클릭 드래그: 이동 · 휠: 확대/축소 · Shift+휠: 미세 조절 · 깊이 제한은 표시만 변경합니다.</p>
+<div id="status" role="status">결과를 선택하거나 GT / prediction PLY를 열어 주세요.</div>
+<section id="views"><article><div class="view-title" id="leftTitle">GT <span id="gtCount"></span></div><canvas id="left" data-slot="0" aria-label="GT 3D point cloud"></canvas></article><article id="rightPane"><div class="view-title">Prediction <span id="predCount"></span></div><canvas id="right" data-slot="1" aria-label="Prediction 3D point cloud"></canvas></article></section>
+<p class="hint">핀홀 카메라 원점 O: X 빨강 = 오른쪽 · Y 초록 = 아래 · Z 파랑 = 전방(광축). 축은 가독성을 위해 점군 위에 표시합니다.</p><section class="metadata"><img id="rgb" alt="검증 입력 RGB 이미지" hidden><pre id="info">PLY의 좌표를 별도로 정렬하거나 정규화하지 않습니다. 두 화면에 동일한 카메라와 축척을 적용합니다.</pre></section>
+</main><script type="module" src="app.js"></script>
+</body></html>

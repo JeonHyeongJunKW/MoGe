@@ -213,25 +213,30 @@ uv run accelerate launch \
 
 ### Choosing which MoGe-2 heads to train
 
-The `train_moge12` entry point accepts two independent boolean options:
+The `train_moge12` entry point accepts independent boolean options:
 
 | Option | Default | Controlled module |
 | --- | --- | --- |
 | `--train_scale_head` | `True` | `scale_head`: metric scale factor MLP |
 | `--train_points_head` | `True` | `points_head`: affine-invariant point map Conv head |
+| `--train_neck` | `False` | Shared convolutional neck |
+| `--train_normal_head` | `False` | Surface normal Conv head |
+| `--train_mask_head` | `False` | Validity mask Conv head |
 
 For example, add `--train_scale_head True --train_points_head False` to the
 finetuning command above to train the scale head while freezing the point head.
-One head can be frozen, but at least one must remain trainable. These are command-line options; the effective
+At least one decoder component must remain trainable. These are command-line options; the effective
 values are recorded in the workspace config under `trainable_heads`.
 
 For MoGe-2, all other modules are frozen by default: the entire encoder (including
-feature projections), neck, normal head and mask head. Only the selected scale
-and point heads are included in the optimizer. Frozen modules stay in eval mode
-while the selected heads use train mode. Losses are still computed for logging;
-only paths connected to the selected heads contribute gradients. Both options
-set to `False` are rejected because there would be nothing to train. MoGe-1
-training behavior is unchanged.
+feature projections), neck, normal head and mask head. The encoder always remains
+frozen under this policy. Only explicitly selected decoder components are included
+in the optimizer. Frozen modules stay in eval mode while selected components use
+train mode. A frozen head can still pass gradients into a trainable neck; freezing
+its parameters does not detach its input. Losses remain enabled for logging and
+supervision. All five options set to `False` are rejected. MoGe-1 training behavior
+is unchanged. For the 5000-step E versus neck/all-heads experiment, see
+[the sweep guide](sweep_5000.md).
 
 When resuming optimizer state, use the same head settings as the original run.
 Checkpoints from the earlier full-model training behavior have different optimizer
@@ -373,6 +378,14 @@ predictions use those same pixel locations. Non-finite or non-positive-Z points
 are omitted. The model's predicted mask is not applied, matching metric
 evaluation. Each overlay contains at most twice `max_points` points. These
 exports reuse validation inference and do not change the full-resolution metrics.
+
+### Compare validation point clouds in a browser
+
+Run `./run.sh` from the repository root and open `http://127.0.0.1:8765`.
+The viewer discovers `gt.ply` / `pred.ply` pairs under `workspace`, with synchronized
+side-by-side cameras, a cyan/orange overlay, and the original scale preserved.
+Use `--root <sweep-or-experiment-directory>` to narrow the results.
+See [the PLY viewer guide](ply_viewer.md) for remote access and controls.
 
 ## Training MoGe-3
 

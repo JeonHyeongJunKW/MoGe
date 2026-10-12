@@ -77,6 +77,9 @@ if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
 @click.option('--enable_ema', type=bool, default=True, help='Maintain an exponential moving average of model weights')
 @click.option('--train_scale_head', type=bool, default=True, show_default=True, help='MoGe-2: train the metric scale MLP head; False freezes its parameters')
 @click.option('--train_points_head', type=bool, default=True, show_default=True, help='MoGe-2: train the affine-invariant point map Conv head; False freezes its parameters')
+@click.option('--train_neck', type=bool, default=False, show_default=True, help='MoGe-2: train the shared convolutional neck; encoder remains frozen')
+@click.option('--train_normal_head', type=bool, default=False, show_default=True, help='MoGe-2: train the normal Conv head')
+@click.option('--train_mask_head', type=bool, default=False, show_default=True, help='MoGe-2: train the validity-mask Conv head')
 @click.option('--val_config', type=click.Path(exists=True, dir_okay=False), default=None, help='MoGe-2 validation JSON; overrides the training config validation section')
 @click.option('--validate_before_training', type=bool, default=False, show_default=True, help='Run validation once on the loaded checkpoint before the first optimizer step')
 @click.option('--debug', 'debug_mode', type=bool, default=False, help='Enable additional debug dumps')
@@ -106,6 +109,9 @@ def main(
     enable_ema: bool,
     train_scale_head: bool,
     train_points_head: bool,
+    train_neck: bool,
+    train_normal_head: bool,
+    train_mask_head: bool,
     val_config: Optional[str],
     validate_before_training: bool,
     debug_mode: bool,
@@ -128,9 +134,14 @@ def main(
         config = json.load(f)
     if gradient_accumulation_steps < 1:
         raise ValueError(f'--gradient_accumulation_steps must be at least 1, got {gradient_accumulation_steps}')
-    if config['model_version'] != 'v2' and (not train_scale_head or not train_points_head):
-        raise ValueError('--train_scale_head False and --train_points_head False are only supported for MoGe-2')
-    config['trainable_heads'] = {'scale_head': train_scale_head, 'points_head': train_points_head}
+    if config['model_version'] != 'v2' and (
+        not train_scale_head or not train_points_head or train_neck or train_normal_head or train_mask_head
+    ):
+        raise ValueError('Decoder finetuning flags are only supported for MoGe-2')
+    config['trainable_heads'] = {
+        'scale_head': train_scale_head, 'points_head': train_points_head,
+        'neck': train_neck, 'normal_head': train_normal_head, 'mask_head': train_mask_head,
+    }
     if val_config is not None:
         with open(val_config, 'r') as f:
             config['validation'] = json.load(f)
@@ -162,7 +173,7 @@ def main(
         model_class = import_model_class_by_version(config['model_version'])
         model = model_class(**config['model'])
     # Freeze before constructing EMA, optimizer groups and the distributed wrapper.
-    # MoGe-2 finetunes only the selected scale/points heads.
+    # MoGe-2 finetunes only selected decoder components; the encoder stays frozen.
     if config['model_version'] == 'v2':
         configure_moge2_heads(model, config['trainable_heads'])
     print(f'Total parameters: {sum(p.numel() for p in model.parameters())}')
@@ -281,8 +292,12 @@ def main(
             save_model_on_first_dump=config.get('debug_save_model_on_first_dump', False),
         )
 
+        # Peak training allocation excludes validation, which runs after this measurement.
+        peak_allocated_gib = peak_reserved_gib = 0.0
         # Training loop
         for i_step in range(initial_step, num_iterations):
+            if device.type == 'cuda':
+                torch.cuda.reset_peak_memory_stats(device)
             with timeit('Step', verbose=False) as timer_step:
                 dumper.begin_step()
                 for i_accumulate in range(gradient_accumulation_steps):
@@ -473,6 +488,26 @@ def main(
             # EMA update
             if enable_ema and accelerator.is_main_process and accelerator.sync_gradients:
                 ema_model.update_parameters(model)
+
+            if device.type == 'cuda':
+                allocated = torch.cuda.max_memory_allocated(device) / 2 ** 30
+                reserved = torch.cuda.max_memory_reserved(device) / 2 ** 30
+                peak_allocated_gib = max(peak_allocated_gib, allocated)
+                peak_reserved_gib = max(peak_reserved_gib, reserved)
+                records.append({'memory/train_peak_allocated_gib': allocated,
+                                'memory/train_peak_reserved_gib': reserved})
+                if accelerator.is_main_process and (
+                    i_step == initial_step or i_step == num_iterations - 1 or
+                    (log_every > 0 and i_step % log_every == 0)
+                ):
+                    memory = {'step': i_step, 'batch_size_forward': batch_size_forward,
+                              'gradient_accumulation_steps': gradient_accumulation_steps,
+                              'peak_allocated_gib': peak_allocated_gib,
+                              'peak_reserved_gib': peak_reserved_gib,
+                              'device_total_gib': torch.cuda.get_device_properties(device).total_memory / 2 ** 30}
+                    (workspace / 'training_memory.json').write_text(json.dumps(memory, indent=2))
+                    pbar.write(f'Training GPU peak: allocated={peak_allocated_gib:.2f} GiB, '
+                               f'reserved={peak_reserved_gib:.2f} GiB')
 
             if log_every > 0:
                 if i_step == initial_step or i_step % log_every == 0:

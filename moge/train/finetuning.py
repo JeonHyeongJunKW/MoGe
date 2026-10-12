@@ -1,9 +1,12 @@
-"""Train only selected MoGe-2 output heads."""
+"""Train selected MoGe-2 decoder components, keeping the encoder frozen."""
 
 
 def configure_moge2_heads(model, trainable_heads):
+    allowed = {'neck', 'scale_head', 'points_head', 'normal_head', 'mask_head'}
+    if set(trainable_heads) - allowed:
+        raise ValueError(f'Unsupported trainable components: {set(trainable_heads) - allowed}')
     if not any(trainable_heads.values()):
-        raise ValueError('MoGe-2 requires at least one of --train_scale_head or --train_points_head to be True')
+        raise ValueError('MoGe-2 requires at least one trainable decoder component')
     for name, enabled in trainable_heads.items():
         if enabled and getattr(model, name, None) is None:
             raise ValueError(f'Cannot train {name}: it is absent from the model config')

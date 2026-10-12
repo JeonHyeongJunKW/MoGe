@@ -17,12 +17,49 @@ class TinyMoGe(nn.Module):
         self.mask_head = nn.Linear(4, 1)
 
     def forward(self, images):
-        features = self.neck(self.encoder(images))
-        return sum(head(features).square().sum() for head in
-                   (self.scale_head, self.points_head, self.normal_head, self.mask_head))
+        encoded = self.encoder(images)
+        features = self.neck(encoded)
+        return self.scale_head(encoded).square().sum() + sum(
+            head(features).square().sum() for head in
+            (self.points_head, self.normal_head, self.mask_head))
 
 
 class FinetuningTests(unittest.TestCase):
+    def test_neck_and_all_heads_train_while_encoder_and_buffers_stay_frozen(self):
+        torch.manual_seed(1)
+        model = TinyMoGe()
+        components = {name: True for name in
+                      ('neck', 'scale_head', 'points_head', 'normal_head', 'mask_head')}
+        configure_moge2_heads(model, components)
+        set_moge2_head_training_modes(model, components)
+        before = {name: value.clone() for name, value in model.state_dict().items()}
+        optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=.01)
+        model(torch.ones(2, 3)).backward()
+        optimizer.step()
+        for name, parameter in model.named_parameters():
+            enabled = not name.startswith('encoder.')
+            self.assertEqual(parameter.grad is not None, enabled, name)
+            self.assertEqual(not torch.equal(before[name], parameter), enabled, name)
+        for name, value in model.named_buffers():
+            self.assertTrue(torch.equal(before[name], value), name)
+        self.assertFalse(model.encoder.training)
+        self.assertTrue(model.neck.training)
+        self.assertTrue(model.normal_head.training)
+        self.assertTrue(model.mask_head.training)
+
+    def test_frozen_normal_head_still_backpropagates_into_trainable_neck(self):
+        model = TinyMoGe()
+        configure_moge2_heads(model, {'neck': True})
+        set_moge2_head_training_modes(model, {'neck': True})
+        model.normal_head(model.neck(model.encoder(torch.ones(2, 3)))).square().sum().backward()
+        self.assertIsNotNone(model.neck.weight.grad)
+        self.assertIsNone(model.normal_head.weight.grad)
+        self.assertIsNone(model.encoder[0].weight.grad)
+
+    def test_encoder_cannot_be_enabled_by_decoder_policy(self):
+        with self.assertRaisesRegex(ValueError, 'Unsupported'):
+            configure_moge2_heads(TinyMoGe(), {'encoder': True})
+
     def test_only_selected_heads_change(self):
         for scale, points in ((True, True), (True, False), (False, True)):
             with self.subTest(scale=scale, points=points):
