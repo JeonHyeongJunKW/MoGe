@@ -7,8 +7,8 @@
 
 | 실험 | scale LR | points LR | neck LR | normal / mask LR | forward × accumulation (GPU 1개) |
 | --- | --- | --- | --- | --- | --- |
-| `e_heads_5000` | 1e-5 | 3e-6 | 동결 | 동결 | 4 × 8 |
-| `e_neck_all_heads_5000` | 1e-5 | 3e-6 | 1e-6 | 각각 3e-6 | 2 × 16 |
+| `e_heads_5000` | 1e-5 | 3e-6 | 동결 | 동결 | 8 × 4 |
+| `e_neck_all_heads_5000` | 1e-5 | 3e-6 | 1e-6 | 각각 3e-6 | 8 × 4 |
 
 공통: encoder 전체 동결, augmentation 없음, warmup 200 후 일정 LR, effective batch 32, seed 0, mixed BF16, gradient checkpointing, EMA 사용. 손실 가중치, 입력 데이터와 모델 구조는 기존 E와 동일합니다. 현재 config의 `low_resolution_training_steps=10000`이므로 5000 step 전체가 1200-token 구간입니다. Scheduler multiplier 개수는 실험별 optimizer group 개수와 일치하도록 생성합니다.
 
@@ -55,9 +55,9 @@ bash run_script/run_gaemi_finetune_sweep_5000.sh
 
 ## 배치와 메모리
 
-대상 GPU는 이전에 확인한 약 23.6 GiB MIG입니다. E의 `4×8`은 기존 실행 설정이고, neck 포함 모델의 `2×16`은 보수적인 시작값입니다. encoder는 여전히 동결되지만 neck과 normal / mask 분기의 역전파 활성값, gradient, Adam 상태가 추가됩니다. mixed BF16 옵션에서도 현재 구현은 encoder만 혼합 정밀도로 동작하고 neck / heads는 FP32이므로, trainable parameter 수만으로 메모리 여유를 추정하면 안 됩니다. Gradient checkpointing은 neck과 conv heads에도 적용됩니다.
+대상 GPU는 이전에 확인한 약 23.6 GiB MIG입니다. 두 실험 모두 기본 `8×4`입니다. 사용자가 해당 GPU에서 수행한 10-step smoke에서 E는 peak allocated / reserved 4.69 / 6.27 GiB, neck 포함 모델은 6.86 / 9.01 GiB로 정상 완료했습니다. encoder는 여전히 동결되지만 neck과 normal / mask 분기의 역전파 활성값, gradient, Adam 상태가 추가됩니다. mixed BF16 옵션에서도 현재 구현은 encoder만 혼합 정밀도로 동작하고 neck / heads는 FP32이므로, trainable parameter 수만으로 메모리 여유를 추정하면 안 됩니다. Gradient checkpointing은 neck과 conv heads에도 적용됩니다.
 
-이 작업 환경에서는 대상 GPU로 측정하지 못했습니다. OOM 없이 실행된다는 보장은 없으며, smoke 결과로 확인해야 합니다. 각 workspace의 `training_memory.json`과 `summary.csv`에 실제 PyTorch training peak allocated / reserved GiB를 기록합니다. 이 값은 CUDA 전체 프로세스 사용량과 같지 않으며 validation 피크도 포함하지 않습니다. Reserved 값에는 이전 validation에서 확보한 allocator cache가 남을 수 있습니다.
+위 수치는 사용자 제공 smoke 로그 기준이며, 전체 학습 및 validation의 최대 메모리를 보장하는 값은 아닙니다. 각 workspace의 `training_memory.json`과 `summary.csv`에 실제 PyTorch training peak allocated / reserved GiB를 기록합니다. 이 값은 CUDA 전체 프로세스 사용량과 같지 않으며 validation 피크도 포함하지 않습니다. Reserved 값에는 이전 validation에서 확보한 allocator cache가 남을 수 있습니다.
 
 neck 조건에서 OOM이면 forward를 1로 낮춥니다. accumulation은 effective batch 32에 맞춰 자동으로 32가 됩니다.
 
@@ -69,7 +69,7 @@ bash run_script/run_gaemi_finetune_sweep_5000.sh \
   --experiment e_neck_all_heads_5000 --batch-size 1
 ```
 
-두 실험을 같은 microbatch로 비교하려면 `--batch-size 2`를 본 실행에 지정하면 모두 `2×16`입니다. Effective batch가 같아도 microbatch 차이로 연산 순서와 확률적 loss 샘플링이 달라질 수 있습니다. Gradient accumulation 횟수를 줄이는 것만으로 속도가 빨라진다고 보장하지 않습니다.
+기본적으로 두 실험 모두 같은 microbatch 8을 사용합니다. 메모리를 줄이려면 `--batch-size 2`로 모두 `2×16`으로 바꿀 수 있습니다. Effective batch가 같아도 microbatch 차이로 연산 순서와 확률적 loss 샘플링이 달라질 수 있습니다. Gradient accumulation 횟수를 줄이는 것만으로 속도가 빨라진다고 보장하지 않습니다.
 
 Validation은 별도 batch 8, 매 250 step, 전체 `.val.txt`, `resolution_level=0`, 고정 8개 샘플의 PLY를 사용합니다. 두 실험과 baseline에 동일 설정을 적용합니다. 이전 batch 16보다 메모리 여유를 두었습니다. `--validation-batch-size 4` 등으로 조정할 수 있습니다. Smoke에는 validation이 없으므로 실제 validation 메모리는 본 실행의 baseline 평가에서 별도로 확인됩니다.
 
