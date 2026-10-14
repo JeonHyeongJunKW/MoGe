@@ -8,7 +8,7 @@
     "experiments": [
         {
             "name": "e_neck_all_heads_batch128_5000",
-            "description": "Train neck and all four heads from the original pretrained checkpoint, effective batch 128, for 5000 optimizer steps; encoder frozen.",
+            "description": "Train neck and all four heads from the original pretrained checkpoint; forward batch 8 with gradient accumulation 16 on one GPU preserves effective batch 128 for 5000 optimizer steps; encoder frozen.",
             "learning_rates": {
                 "scale_head": 1e-05,
                 "points_head": 3e-06,
@@ -16,7 +16,7 @@
                 "normal_head": 3e-06,
                 "mask_head": 3e-06
             },
-            "batch_size_forward": 128
+            "batch_size_forward": 8
         }
     ]
 }
