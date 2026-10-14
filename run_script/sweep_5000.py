@@ -97,6 +97,9 @@ def summarize(root, runs, dry_run, smoke):
                      'learning_rates': ', '.join(f'{k}={v:g}' for k, v in rates.items()),
                      'best_step': best.get('step', ''), 'best_rel': best.get('score', ''),
                      'best_delta1': metrics.get('depth_metric/delta1', ''),
+                     'best_points_rel': metrics.get('points_metric/rel', ''),
+                     'best_points_scale_rel': metrics.get('points_scale_invariant/rel', ''),
+                     'best_fov_mae': metrics.get('fov_x/mae', ''),
                      'latest_rel': latest.get('metrics', {}).get('mean', {}).get('depth_metric/rel', ''),
                      'peak_allocated_gib': memory.get('peak_allocated_gib', ''),
                      'peak_reserved_gib': memory.get('peak_reserved_gib', '')})
@@ -187,7 +190,8 @@ def main():
     runs = []
     if not args.smoke and not args.skip_baseline:
         _, config, batch, accumulation = resolved[0]
-        directory = root / 'pretrained_baseline'
+        baseline_name = manifest.get('baseline_name', 'pretrained_baseline')
+        directory = root / baseline_name
         directory.mkdir()
         write_json(directory / 'train_config.json', config)
         rates = resolved[0][0]['learning_rates']

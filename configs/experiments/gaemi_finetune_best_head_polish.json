@@ -1,0 +1,29 @@
+{
+    "base_config": "configs/train/gaemi_moge2_vits_small_augmentation.json",
+    "validation_config": "configs/validation/gaemi_moge2_vits_sweep_5000.json",
+    "num_iterations": 750,
+    "effective_batch_size": 32,
+    "warmup_steps": 50,
+    "seed": 0,
+    "baseline_name": "all_neck_best_baseline",
+    "experiments": [
+        {
+            "name": "best_heads_conservative_750",
+            "description": "Start from the all-neck best checkpoint, freeze encoder/neck/normal/mask, and conservatively polish scale and points heads.",
+            "learning_rates": {
+                "scale_head": 1e-06,
+                "points_head": 3e-07
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "best_heads_moderate_750",
+            "description": "Start from the all-neck best checkpoint, freeze encoder/neck/normal/mask, and polish scale and points heads at one third of their previous rates.",
+            "learning_rates": {
+                "scale_head": 3e-06,
+                "points_head": 1e-06
+            },
+            "batch_size_forward": 8
+        }
+    ]
+}
