@@ -16,7 +16,7 @@
                 "normal_head": 3e-06,
                 "mask_head": 3e-06
             },
-            "batch_size_forward": 8
+            "batch_size_forward": 128
         }
     ]
 }
