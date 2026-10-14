@@ -160,6 +160,30 @@ class ValidationTests(unittest.TestCase):
         self.assertAlmostEqual(result['mean']['depth_metric/rel'], (.5 + .75) / 2)
         self.assertEqual(result['val']['num_samples'], 1)
 
+    def test_depth_bins_use_scaled_gt_and_do_not_change_monitor_or_resume(self):
+        original = self.runner()
+        original.record({'mean': {'depth_metric/rel': .9}}, self.model, {}, 1, self.logger)
+        cfg = {**self.config, 'depth_bins': {'width_m': 1, 'max_depth_m': 5}}
+        runner = self.runner(cfg)
+        self.assertEqual(runner.signature, original.signature)
+        deps, _ = self.fake_dependencies()
+        with deps:
+            result = runner.evaluate(self.model, torch.device('cpu'))
+        self.assertAlmostEqual(result['mean']['depth_metric/rel'], .625)
+        bins = runner.depth_bin_results['datasets']['val']
+        self.assertEqual(bins[2]['num_pixels'], 4)
+        self.assertEqual(bins[4]['num_pixels'], 4)
+        self.assertEqual(bins[1]['num_pixels'], 0)
+        runner.record(result, self.model, {}, 3, self.logger)
+        folder = self.root / 'workspace' / 'validation'
+        self.assertTrue((folder / 'depth_bins_step_00000003.csv').exists())
+        self.assertTrue((folder / 'best_depth_bins.csv').exists())
+        self.assertEqual(json.loads((folder / 'best_depth_bins.json').read_text())['step'], 3)
+        self.assertEqual(len(list(folder.glob('step_*.json'))), 2)
+        # An improved checkpoint without diagnostics must not keep an older best report.
+        self.runner().record({'mean': {'depth_metric/rel': .1}}, self.model, {}, 5, self.logger)
+        self.assertFalse((folder / 'best_depth_bins.json').exists())
+
     def test_batched_inference_preserves_per_sample_metrics(self):
         cfg = {**self.config, 'batch_size': 2}
         deps, _ = self.fake_dependencies()

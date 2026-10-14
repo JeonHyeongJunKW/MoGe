@@ -341,6 +341,48 @@ Outputs are saved independently of `--log_every` and `--checkpoint_every`:
 optimizer/scheduler state and does not replace `latest.pt`. Use the normal
 `--checkpoint latest` flow for full training-state resumption.
 
+#### Depth metrics by distance
+
+GAEMI validation configs also enable GT-depth bins:
+
+```json
+"depth_bins": {"width_m": 1.0, "max_depth_m": 1000.0}
+```
+
+This adds `[0, 1)`, `[1, 2)`, ... `[999, 1000)` meter bins and an overflow
+bin for depths at least 1000 m. Bins use the **ground-truth camera-Z depth**
+after validation preprocessing and unit conversion, not predicted depth or
+Euclidean distance from the camera. Zero/negative/nonfinite GT and pixels
+outside the existing GT validity mask are excluded. The predicted mask does
+not remove evaluation pixels. Relative-depth images are skipped and counted
+in `skipped_nonmetric_images`.
+
+Each bin reports `rel`, `delta1`, `mae_m`, `rmse_m`, `num_pixels`, and
+`num_images`. Bin metrics aggregate **all valid pixels with equal weight**;
+the existing overall metrics still average images with equal weight. Empty
+bins have null metrics in JSON and blank cells in CSV, not zero error.
+`lower_m` is inclusive and `upper_m` exclusive; an empty upper bound means
+the overflow bin. Reports contain each dataset and a combined `all` scope.
+
+After each validation, populated bins are also printed as a terminal table
+and captured in the sweep's `run.log`. Terminal delta1 is a percentage;
+JSON/CSV delta1 remains a fraction from 0 to 1. Empty bins are omitted only
+from terminal output. Multiple datasets get separate tables and a combined
+table; a single dataset is printed once.
+
+Files in each experiment's `validation/` directory:
+
+- `depth_bins_step_00000249.csv` / `.json`: distance report for that evaluation.
+- `best_depth_bins.csv` / `.json`: report for the best overall depth-REL
+  checkpoint, when distance reporting was enabled at that evaluation. JSON
+  includes the corresponding step and overall monitor score.
+
+Overall metrics, summary CSV selection and checkpoint selection are unchanged.
+Remove `depth_bins` or set it to null to disable these reports. Enabling this
+additional report is compatible with existing validation best-score metadata,
+but does not recreate reports for earlier evaluations. Already running jobs
+and previously copied workspace configs do not pick up repository edits.
+
 #### Validation 3D comparisons
 
 Both example validation configs enable point-cloud exports. Add or adjust:

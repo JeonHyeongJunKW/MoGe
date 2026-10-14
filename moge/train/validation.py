@@ -9,6 +9,10 @@ from pathlib import Path
 import numpy as np
 import torch
 from tqdm import tqdm
+from .depth_bins import (
+    DepthBinAccumulator, depth_bin_report, format_depth_bin_report,
+    validate_depth_bins, write_depth_bin_report,
+)
 
 
 class ValidationRunner:
@@ -23,6 +27,8 @@ class ValidationRunner:
         self.batch_size = config.get('batch_size', 1)
         self.seed = config.get('seed', 0)
         self.datasets = config.get('datasets', {})
+        self.depth_bins = validate_depth_bins(config.get('depth_bins'))
+        self.depth_bin_results = None
         visualization = config.get('visualization', {})
         if not isinstance(visualization, dict) or set(visualization) - {'num_samples', 'max_points'}:
             raise ValueError('validation.visualization accepts num_samples and max_points only')
@@ -32,7 +38,7 @@ class ValidationRunner:
             raise ValueError('validation.visualization.num_samples must be a non-negative integer')
         if type(self.vis_max_points) is not int or self.vis_max_points < 1:
             raise ValueError('validation.visualization.max_points must be a positive integer')
-        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization'}
+        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization', 'depth_bins'}
         if unknown:
             raise ValueError(f'Unknown validation options: {sorted(unknown)}')
         if type(self.seed) is not int or not 0 <= self.seed < 2 ** 32:
@@ -53,7 +59,8 @@ class ValidationRunner:
             raise ValueError('validation.datasets must be a non-empty mapping of names to evaluation configs')
         # Include split contents so resumed runs cannot compare different validation sets.
         # Visualization does not affect metrics; allow enabling it on resumed runs.
-        identity = {'config': {k: v for k, v in self.config.items() if k != 'visualization'}, 'splits': {}}
+        # Auxiliary distance reports also leave the overall monitor unchanged.
+        identity = {'config': {k: v for k, v in self.config.items() if k not in ('visualization', 'depth_bins')}, 'splits': {}}
         for name, dataset in self.datasets.items():
             if '/' in name or '\\' in name or name in ('', '.', '..', 'mean'):
                 raise ValueError('Validation dataset names must be safe directory names and cannot equal mean')
@@ -88,6 +95,8 @@ class ValidationRunner:
 
     @torch.no_grad()
     def evaluate(self, model, device, step=None):
+        self.depth_bin_results = None
+        depth_accumulators = {}
         from ..test.dataloader import EvalDataLoaderPipeline
         from ..test.metrics import compute_metrics
         from ..utils.io import read_json
@@ -127,6 +136,8 @@ class ValidationRunner:
                 np.random.seed(self.seed)
                 torch.manual_seed(self.seed)
                 for name, dataset in self.datasets.items():
+                    if self.depth_bins is not None:
+                        depth_accumulators[name] = DepthBinAccumulator(self.depth_bins)
                     sums, metric_counts = defaultdict(float), defaultdict(int)
                     evaluated = skipped = 0
                     # Recreate the finite pipeline on every validation pass.
@@ -184,6 +195,11 @@ class ValidationRunner:
                                 pred = {'depth_metric': output['depth'], 'points_metric': output['points'],
                                         'intrinsics': output['intrinsics']}
                                 metrics, _ = compute_metrics(pred, sample, mg=self.config.get('metric_groups', 'global,metric'))
+                                if self.depth_bins is not None:
+                                    depth_accumulators[name].update(
+                                        output['depth'], sample['depth'], sample['depth_mask'],
+                                        is_metric=bool(sample['is_metric']),
+                                    )
                                 for group, values in metrics.items():
                                     for key, value in values.items():
                                         value = float(value)
@@ -207,6 +223,8 @@ class ValidationRunner:
             np.random.set_state(numpy_state)
         # Each eligible image has equal weight, rather than each dataset.
         results['mean'] = {key: totals[key] / counts[key] for key in totals}
+        if self.depth_bins is not None:
+            self.depth_bin_results = depth_bin_report(depth_accumulators, self.depth_bins)
         return results
 
     def record(self, results, model, model_config, step, logger):
@@ -220,6 +238,11 @@ class ValidationRunner:
                 'signature': self.signature, 'metrics': results}
         output_dir = self.workspace / 'validation'
         output_dir.mkdir(parents=True, exist_ok=True)
+        depth_report = None
+        if self.depth_bin_results is not None:
+            depth_report = {'step': step, 'monitor': self.monitor, 'score': score, **self.depth_bin_results}
+            # Use a distinct prefix: sweep summaries glob step_*.json for overall metrics.
+            write_depth_bin_report(output_dir / f'depth_bins_step_{step:08d}', depth_report)
         (output_dir / f'step_{step:08d}.json').write_text(json.dumps(info, indent=2, allow_nan=False))
         if improved:
             self.best_path.parent.mkdir(parents=True, exist_ok=True)
@@ -234,11 +257,19 @@ class ValidationRunner:
             temporary_info.write_text(json.dumps(info, indent=2, allow_nan=False))
             temporary_info.replace(self.best_info_path)
             self.best_score = score
+            if depth_report is not None:
+                write_depth_bin_report(output_dir / 'best_depth_bins', depth_report)
+            else:
+                # Do not leave an old report mislabeled as the new best checkpoint.
+                for extension in ('.json', '.csv'):
+                    (output_dir / ('best_depth_bins' + extension)).unlink(missing_ok=True)
         scalars = {f'val/{name}/{key}': value for name, metrics in results.items() for key, value in metrics.items()}
         scalars['val/best_score'] = self.best_score
         logger.log_validation(scalars, step)
         print(f'[Validation step {step}] {self.monitor}={score:.6g}, best={self.best_score:.6g}'
               + (' (saved best.pt)' if improved else ''))
+        if depth_report is not None:
+            tqdm.write(format_depth_bin_report(depth_report))
 
     def run(self, model, accelerator, model_config, step, logger):
         """Called on every rank; only rank zero evaluates the unwrapped model."""
