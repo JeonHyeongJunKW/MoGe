@@ -125,7 +125,7 @@ def main():
     parser.add_argument('--experiment', action='append', help='Run only this experiment (repeatable)')
     parser.add_argument('--num-iterations', type=int)
     parser.add_argument('--num-processes', type=int, default=1)
-    parser.add_argument('--batch-size', type=int, help='Override forward batch; accumulation preserves effective batch 32')
+    parser.add_argument('--batch-size', type=int, help='Override forward batch; accumulation preserves the manifest effective_batch_size')
     parser.add_argument('--validation-batch-size', type=int)
     parser.add_argument('--data-root', type=Path)
     parser.add_argument('--dry-run', action='store_true', help='Write resolved configs/commands without starting training')
