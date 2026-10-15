@@ -19,15 +19,57 @@ def inside(root, relative):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def __init__(self, *args, root, **kwargs):
+    def __init__(self, *args, root, data_roots=(), **kwargs):
         self.root = root
+        self.data_roots = tuple(Path(p).resolve() for p in data_roots)
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
         url = urlsplit(self.path)
         query = parse_qs(url.query)
         try:
-            if url.path == '/api/samples':
+            if url.path == '/api/data-roots':
+                self.send_bytes(json.dumps({'roots': [str(p) for p in self.data_roots]}).encode(), 'application/json')
+                return
+            if url.path == '/api/reports':
+                reports = []
+                if self.root.is_dir():
+                    for candidate in sorted(self.root.rglob('per_image_step_*.json')):
+                        try:
+                            relative = candidate.relative_to(self.root).as_posix()
+                            inside(self.root, relative)
+                            reports.append(relative)
+                        except ValueError:
+                            continue
+                self.send_bytes(json.dumps({'reports': reports}).encode(), 'application/json')
+                return
+            if url.path == '/api/dataset-image':
+                root = Path(query.get('root', [''])[0]).resolve()
+                if root not in self.data_roots:
+                    raise ValueError('Dataset root not registered with --data-root')
+                path = inside(root, query.get('filename', [''])[0])
+                if path.name != 'image.jpg':
+                    raise ValueError('Only dataset RGB images are served')
+            elif url.path in ('/api/report', '/api/report-image'):
+                report_path = inside(self.root, query.get('report', [''])[0])
+                if not report_path.name.startswith('per_image_step_') or report_path.suffix != '.json':
+                    raise ValueError('Invalid report')
+                if url.path == '/api/report':
+                    data = json.loads(report_path.read_text())
+                    if data.get('schema_version') != 1 or not isinstance(data.get('samples'), list):
+                        raise ValueError('Unsupported report')
+                    self.send_bytes(json.dumps(data, allow_nan=False).encode(), 'application/json')
+                    return
+                report = json.loads(report_path.read_text())
+                index = int(query.get('index', ['-1'])[0])
+                if index < 0 or index >= len(report['samples']):
+                    raise ValueError('Invalid sample')
+                preview = report['samples'][index].get('image', '')
+                path = inside(report_path.parent.resolve(), preview)
+                inside(self.root, path)
+                if path.suffix.lower() != '.jpg' or path.parent != report_path.parent.resolve() / 'sample_images':
+                    raise ValueError('Invalid preview')
+            elif url.path == '/api/samples':
                 samples = []
                 if self.root.is_dir():
                     for gt in sorted(self.root.rglob('gt.ply')):
@@ -40,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
                             continue
                 self.send_bytes(json.dumps({'samples': samples}).encode(), 'application/json')
                 return
-            if url.path == '/api/asset':
+            elif url.path == '/api/asset':
                 name = query.get('name', [''])[0]
                 if name not in ASSETS:
                     self.send_error(404)
@@ -49,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
                 path = inside(self.root, path)
             else:
                 name = url.path.removeprefix('/') or 'index.html'
-                if name not in {'index.html', 'app.js', 'ply.js', 'trackball.js', 'style.css'}:
+                if name not in {'index.html', 'app.js', 'ply.js', 'trackball.js', 'style.css', 'analysis.html', 'analysis.js', 'analysis.css', 'tags.js'}:
                     self.send_error(404)
                     return
                 path = STATIC / name
@@ -61,7 +103,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 while chunk := source.read(1024 * 1024):
                     self.wfile.write(chunk)
-        except (ValueError, FileNotFoundError, IsADirectoryError, PermissionError):
+        except (ValueError, KeyError, TypeError, FileNotFoundError, IsADirectoryError, PermissionError):
             self.send_error(404)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -79,10 +121,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT, help='Directory to scan recursively for gt.ply + pred.ply')
     parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--data-root', type=Path, action='append', default=[], help='Dataset RGB root; repeat for multiple datasets')
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     root = args.root.resolve()
-    server = ThreadingHTTPServer((args.host, args.port), partial(Handler, root=root))
+    server = ThreadingHTTPServer((args.host, args.port), partial(Handler, root=root, data_roots=args.data_root))
     print(f'PLY viewer: http://{args.host}:{server.server_port}\nResults root: {root}', flush=True)
     try:
         server.serve_forever()

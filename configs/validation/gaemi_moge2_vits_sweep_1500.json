@@ -25,5 +25,6 @@
     "depth_bins": {
         "width_m": 1.0,
         "max_depth_m": 1000.0
-    }
+    },
+    "per_image_metrics": true
 }

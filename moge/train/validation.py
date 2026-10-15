@@ -29,6 +29,10 @@ class ValidationRunner:
         self.datasets = config.get('datasets', {})
         self.depth_bins = validate_depth_bins(config.get('depth_bins'))
         self.depth_bin_results = None
+        self.per_image_metrics = config.get('per_image_metrics', False)
+        if type(self.per_image_metrics) is not bool:
+            raise ValueError('validation.per_image_metrics must be boolean')
+        self.image_records = []
         visualization = config.get('visualization', {})
         if not isinstance(visualization, dict) or set(visualization) - {'num_samples', 'max_points'}:
             raise ValueError('validation.visualization accepts num_samples and max_points only')
@@ -38,7 +42,7 @@ class ValidationRunner:
             raise ValueError('validation.visualization.num_samples must be a non-negative integer')
         if type(self.vis_max_points) is not int or self.vis_max_points < 1:
             raise ValueError('validation.visualization.max_points must be a positive integer')
-        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization', 'depth_bins'}
+        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization', 'depth_bins', 'per_image_metrics'}
         if unknown:
             raise ValueError(f'Unknown validation options: {sorted(unknown)}')
         if type(self.seed) is not int or not 0 <= self.seed < 2 ** 32:
@@ -60,7 +64,7 @@ class ValidationRunner:
         # Include split contents so resumed runs cannot compare different validation sets.
         # Visualization does not affect metrics; allow enabling it on resumed runs.
         # Auxiliary distance reports also leave the overall monitor unchanged.
-        identity = {'config': {k: v for k, v in self.config.items() if k not in ('visualization', 'depth_bins')}, 'splits': {}}
+        identity = {'config': {k: v for k, v in self.config.items() if k not in ('visualization', 'depth_bins', 'per_image_metrics')}, 'splits': {}}
         for name, dataset in self.datasets.items():
             if '/' in name or '\\' in name or name in ('', '.', '..', 'mean'):
                 raise ValueError('Validation dataset names must be safe directory names and cannot equal mean')
@@ -95,6 +99,7 @@ class ValidationRunner:
 
     @torch.no_grad()
     def evaluate(self, model, device, step=None):
+        self.image_records = []
         self.depth_bin_results = None
         depth_accumulators = {}
         from ..test.dataloader import EvalDataLoaderPipeline
@@ -208,6 +213,13 @@ class ValidationRunner:
                                         metric = f'{group}/{key}'
                                         sums[metric] += value
                                         metric_counts[metric] += 1
+                                if self.per_image_metrics:
+                                    from .per_image_validation import make_image_record
+                                    self.image_records.append(make_image_record(
+                                        sample, metrics, name, sample_index,
+                                        self.workspace / 'validation' if step is not None else None,
+                                        dataset_root=dataset['path'],
+                                    ))
                                 evaluated += 1
                     if not evaluated or not metric_counts:
                         raise ValueError(f'Validation dataset {name} has no evaluable samples/metrics')
@@ -238,6 +250,9 @@ class ValidationRunner:
                 'signature': self.signature, 'metrics': results}
         output_dir = self.workspace / 'validation'
         output_dir.mkdir(parents=True, exist_ok=True)
+        if self.per_image_metrics and self.image_records:
+            from .per_image_validation import write_image_report
+            write_image_report(output_dir, step, self.signature, self.image_records)
         depth_report = None
         if self.depth_bin_results is not None:
             depth_report = {'step': step, 'monitor': self.monitor, 'score': score, **self.depth_bin_results}

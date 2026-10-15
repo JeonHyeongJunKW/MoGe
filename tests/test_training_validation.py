@@ -111,6 +111,27 @@ class ValidationTests(unittest.TestCase):
                                          'moge.test.metrics': metric_module,
                                          'moge.utils.io': io_module}), Loader
 
+    def test_per_image_report_matches_aggregate_and_reuses_previews(self):
+        config = {**self.config, 'per_image_metrics': True}
+        runner = self.runner(config)
+        self.assertEqual(runner.signature, self.runner().signature)
+        deps, _ = self.fake_dependencies()
+        with deps:
+            results = runner.evaluate(self.model, torch.device('cpu'), step=1)
+            runner.record(results, self.model, {}, 1, self.logger)
+            runner.evaluate(self.model, torch.device('cpu'), step=2)
+        directory = runner.workspace / 'validation'
+        report = json.loads((directory / 'per_image_step_00000001.json').read_text())
+        rows = report['samples']
+        self.assertEqual([r['metrics']['depth_metric/rel'] for r in rows], [.5, .75])
+        self.assertEqual(rows[0]['dataset_root'], str(self.root))
+        self.assertEqual(rows[0]['data_path'], str(self.root / 'sample_0'))
+        self.assertEqual(rows[0]['image_path'], 'sample_0/image.jpg')
+        self.assertEqual(len(runner.image_records), 2)
+        self.assertEqual(len(list((directory / 'sample_images').glob('*.jpg'))), 1)
+        self.assertTrue((directory / rows[0]['image']).is_file())
+        self.assertTrue((directory / 'per_image_step_00000001.csv').is_file())
+
     def test_schedule_and_config_errors(self):
         runner = self.runner()
         self.assertFalse(runner.is_due(0, 5))

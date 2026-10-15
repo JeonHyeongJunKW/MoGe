@@ -24,7 +24,10 @@ class ViewerTests(unittest.TestCase):
             (self.sample / name).write_bytes(b'ply\nfixture')
         (self.base / 'secret').write_text('private')
         (self.sample / 'info.json').symlink_to(self.base / 'secret')
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, root=self.root))
+        self.data_root = self.base / 'dataset'
+        (self.data_root / 'sample').mkdir(parents=True)
+        (self.data_root / 'sample' / 'image.jpg').write_bytes(b'original RGB')
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, root=self.root, data_roots=[self.data_root]))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.server.server_port}'
@@ -46,6 +49,40 @@ class ViewerTests(unittest.TestCase):
         self.assertEqual(self.get(asset), b'ply\nfixture')
         self.assertIn(b'GT & Prediction', self.get('/'))
         self.assertIn(b'export function trackball', self.get('/trackball.js'))
+
+    def test_dataset_images_require_registered_root_and_stay_inside_it(self):
+        self.assertEqual(json.loads(self.get('/api/data-roots'))['roots'], [str(self.data_root)])
+        route = '/api/dataset-image?'
+        self.assertEqual(self.get(route + urlencode({'root': str(self.data_root), 'filename': 'sample/image.jpg'})), b'original RGB')
+        (self.data_root / 'escape').symlink_to(self.base, target_is_directory=True)
+        (self.base / 'image.jpg').write_bytes(b'outside')
+        for root, filename in [(self.base, 'dataset/sample/image.jpg'),
+                               (self.data_root, '../secret'),
+                               (self.data_root, 'sample/meta.json'),
+                               (self.data_root, 'escape/image.jpg')]:
+            with self.assertRaises(HTTPError):
+                self.get(route + urlencode({'root': str(root), 'filename': filename}))
+
+    def test_image_reports_and_preview_boundary(self):
+        directory = self.root / 'validation'
+        images = directory / 'sample_images'
+        images.mkdir()
+        (images / 'rgb.jpg').write_bytes(b'jpeg fixture')
+        report = directory / 'per_image_step_00000001.json'
+        payload = {'schema_version': 1, 'samples': [{'image': 'sample_images/rgb.jpg'}]}
+        report.write_text(json.dumps(payload))
+        relative = report.relative_to(self.root).as_posix()
+        self.assertEqual(json.loads(self.get('/api/reports'))['reports'], [relative])
+        self.assertEqual(json.loads(self.get('/api/report?' + urlencode({'report': relative}))), payload)
+        route = '/api/report-image?' + urlencode({'report': relative, 'index': 0})
+        self.assertEqual(self.get(route), b'jpeg fixture')
+        (images / 'rgb.jpg').unlink()
+        (images / 'rgb.jpg').symlink_to(self.base / 'secret')
+        with self.assertRaises(HTTPError):
+            self.get(route)
+        with self.assertRaises(HTTPError):
+            self.get('/api/report?' + urlencode({'report': '../per_image_step_1.json'}))
+        self.assertIn(b'analysis.js', self.get('/analysis.html'))
 
     def test_no_traversal_arbitrary_files_or_symlink_escape(self):
         for params in [

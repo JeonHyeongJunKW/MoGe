@@ -43,3 +43,90 @@ python3 -m unittest discover -s tests -p test_ply_viewer.py
 node tests/test_ply_parser.mjs
 node tests/test_trackball.mjs
 ```
+
+## 이미지별 validation 오차 분석
+
+`./run.sh` 실행 후 **http://localhost:8765/analysis.html** 을 엽니다. PLY 화면 상단에도 링크가 있습니다. 웹 화면은 추가 패키지 없이 실행되며 평가 명령은 MoGe 학습 환경에서 실행해야 합니다.
+
+- 결과 A를 선택하고 불러오면 REL 등의 히스토그램, 이미지별 분포, 평균/P50/P90을 확인합니다. 학습 objective loss가 아니라 기존 validation에서 계산한 **이미지별 평가 지표**입니다.
+- 히스토그램 막대를 클릭하면 해당 구간의 목록으로 좁힙니다. 점이나 목록 행을 선택하면 해당 평가 입력 RGB와 전체 지표가 표시됩니다.
+- Town / 환경 / 카메라 / 경로로 필터링하고 오차 순으로 정렬합니다. 환경은 gaemi 경로의 `__day`, `__night`, `__indoor-proxy`에서 추정하며 그 외에는 unknown입니다.
+- 선택적으로 결과 B를 지정하면 `dataset + filename`이 같은 이미지의 교집합을 비교합니다. B−A와 악화 순 정렬을 지원합니다. REL은 작을수록, δ1은 클수록, signed deviation은 0에 가까울수록 좋습니다. 평균/P50/P90은 메타데이터·검색 필터 전체 기준이며 히스토그램 구간 선택은 목록에 적용합니다.
+- 현재 목록을 CSV로 내려받을 수 있습니다. 각 보고서의 전체 CSV도 JSON 옆에 저장됩니다.
+
+gaemi validation 설정에 `"per_image_metrics": true`를 추가했습니다. **수정된 설정을 읽고 시작하는 학습**은 각 validation에서 다음 파일을 저장합니다. 이미 실행 중인 프로세스나 이전에 복사된 설정에는 자동 적용되지 않습니다.
+
+```text
+<experiment>/validation/per_image_step_XXXXXXXX.json
+<experiment>/validation/per_image_step_XXXXXXXX.csv
+<experiment>/validation/sample_images/<content_hash>.jpg
+```
+
+RGB는 내용 해시로 중복 저장을 피합니다. 다른 PC로 옮길 때에는 `sample_images`도 함께 복사하세요. 이 기능은 기존 validation 평균이나 best checkpoint 선정 기준을 변경하지 않습니다.
+
+이미 끝난 실험은 전체 평균만으로 이미지별 값을 복원할 수 없으므로 **저장된 checkpoint로 validation만 다시 실행**합니다. 학습이나 optimizer 갱신은 하지 않습니다.
+
+```bash
+python -m moge.scripts.analyze_validation \
+  --checkpoint /path/to/checkpoint/best.pt \
+  --config configs/validation/gaemi_moge2_vits_sweep_5000.json \
+  --data-root /home/coder/dataset \
+  --output workspace/validation_analysis/neck_best \
+  --batch-size 8
+
+./run.sh
+```
+
+`--output`은 새 빈 폴더를 지정합니다. 다른 checkpoint를 별도 폴더에 평가하면 A/B 비교가 가능합니다. `--max-samples 32`는 데이터셋별 첫 32장으로 기능만 빠르게 확인하는 옵션이며 전체 성능 판단에는 사용하지 마세요. 기본값은 전체 validation입니다. `summary.json`에 checkpoint 경로, 평가 설정, 전체 평균을 함께 저장합니다. 단독 평가의 step은 0으로 표시됩니다.
+
+비교 시에는 동일한 데이터·split·해상도·mask·모델 가중치 종류(EMA 여부)를 사용하세요. 화면은 설정 signature가 다르면 경고하지만 데이터 내용이나 checkpoint의 EMA 여부까지 자동 판별하지는 않습니다. 현재 미리보기는 RGB이며, 모든 이미지의 GT/prediction depth나 PLY를 추가 생성하지 않습니다.
+
+### Map·구간 태그로 비교하기
+
+분석 화면의 **태그 추가 / 관리**에서 이름과 조건을 지정합니다. 기존 이미지별 보고서에도 바로 사용할 수 있으며 재평가가 필요하지 않습니다.
+
+- **Map 전체**: Map에서 `Town05` 등을 선택하고 scene/번호는 비운 뒤 이름을 입력하고 `조건으로 태그 추가`를 누릅니다. Map은 보고서의 `map_file`, `map`, `town` 순서로 사용합니다. 현재 gaemi 보고서는 Town 기준이며 별도 지도 파일의 내용을 읽지는 않습니다. 데이터 경로로 묶으려면 경로 접두사를 지정합니다.
+- **주행 구간**: 이미지를 선택하고 `선택 이미지의 조건 채우기`를 누르면 dataset/map/scene과 샘플 번호가 입력됩니다. 시작/끝 번호를 바꾸고 `교차로`, `터널` 같은 이름으로 추가하세요. 예를 들어 `samples/000030`부터 `samples/000050`까지 양 끝을 포함합니다. 서로 다른 scene의 같은 번호가 섞이지 않도록 번호 구간은 scene 지정이 필수입니다. 카메라를 비우면 해당 구간의 모든 카메라를 포함합니다. 픽셀 영역이나 지도상의 공간 좌표를 지정하는 기능은 아닙니다.
+- **현재 선택 목록**: 검색·카메라·히스토그램 구간 등을 고른 후 `현재 목록 전체에 태그`를 누르면 페이지 제한 없이 현재 표시 대상 이미지 전체를 고정 목록으로 저장합니다. 오차가 큰 구간을 골라 다른 checkpoint에서도 같은 이미지들을 비교할 때 유용합니다.
+
+그룹 비교 표에서 태그/Map/Scene별 이미지 수, A 평균·P50·P90, B 평균·P90, 평균 차이를 확인합니다. 태그 행을 누르면 그 태그의 히스토그램과 이미지 목록이 표시됩니다. 그룹 표는 검색·메타데이터 필터를 반영하지만 태그 필터와 히스토그램 선택은 제외하여 다른 그룹을 함께 비교할 수 있습니다. A/B를 불러온 경우 공통 이미지에 대해서만 계산합니다.
+
+같은 태그 이름의 여러 규칙은 합집합이며 동일 이미지를 한 번만 집계합니다. 다른 태그끼리는 겹칠 수 있어 이미지 수를 모두 합하면 전체보다 커질 수 있습니다. 표의 수치는 기존과 동일한 이미지별 검증 지표이며 학습 objective loss는 아닙니다. 현재 목록 CSV에는 태그도 포함하고 그룹 통계도 CSV로 내려받을 수 있습니다.
+
+태그는 **브라우저 localStorage**에 자동 저장됩니다(접속 주소/포트별 저장). 같은 `dataset + filename`에 대해 실험/step 간 재사용하며 원본 보고서는 수정하지 않습니다. 브라우저 데이터를 삭제하거나 PC/주소를 바꾸기 전 `태그 JSON 내보내기`로 백업하세요. `가져오기`는 현재 태그 규칙을 교체합니다. 다른 사람이 같은 서버에 접속해도 태그는 자동 공유되지 않으므로 JSON을 전달하세요. 저장 공간이 부족하면 오류를 표시하며 기존 저장 규칙은 유지합니다.
+
+### 경로별 지표 저장 스크립트와 외부 파일 불러오기
+
+학습 환경(venv)을 활성화한 후 실행합니다. `--dataset-path`는 `--data-root`와 같은 옵션입니다. 기본 gaemi validation 설정의 크기/깊이 단위를 사용하며 다른 데이터 포맷은 `--config`로 평가 설정을 지정하세요.
+
+```bash
+bash run_script/export_validation_loss.sh \
+  --checkpoint /home/coder/MoGe/workspace/실험/checkpoint/best.pt \
+  --dataset-path /home/coder/dataset \
+  --split .val.txt \
+  --output workspace/validation_loss/neck_best \
+  --batch-size 8
+```
+
+새 빈 output 폴더를 사용합니다. `--split .train.txt`로 같은 checkpoint의 train 데이터 오차도 평가할 수 있습니다(학습 업데이트 없음). `--max-samples 32`로 먼저 입출력을 점검할 수 있습니다. 이미지별 평가 지표는 다음 파일에 저장됩니다.
+
+```text
+workspace/validation_loss/neck_best/validation/per_image_step_00000000.json
+workspace/validation_loss/neck_best/validation/per_image_step_00000000.csv
+```
+
+각 레코드에는 `dataset`, `filename`(데이터셋 상대 샘플 경로), `dataset_root`, `data_path`(절대 샘플 경로), `image_path`(상대 image.jpg 경로), 지표가 기록됩니다. JSON에는 checkpoint와 평가 설정/전체 평균도 함께 기록합니다. CSV는 경로별 표 분석용이고 viewer 직접 불러오기는 JSON을 사용합니다. 저장되는 값은 REL·δ1 등의 검증 지표이며 학습 objective loss는 아닙니다.
+
+데이터셋과 결과 폴더가 서로 다른 위치에 있어도 아래처럼 실행할 수 있습니다.
+
+```bash
+./run.sh --root workspace --data-root /home/coder/dataset
+# 로컬 PC에 데이터가 있는 경우
+./run.sh --root workspace --data-root /home/jeon/gaemi_simulations/datasets/mono-depth
+```
+
+1. `http://localhost:8765/analysis.html`에서 **A 저장된 validation JSON 불러오기**로 위 JSON 파일을 선택합니다. 비교할 두 번째 파일은 B에 지정합니다. 파일은 브라우저에서만 읽습니다.
+2. **A/B 데이터셋 경로**에서 원본 데이터가 있는 경로를 선택합니다. 등록한 경로가 하나이면 JSON 불러오기 시 자동 선택합니다. 여러 경로는 `--data-root`를 반복해서 등록합니다.
+3. 다른 PC에서 생성한 JSON도 상대 `filename` 구조가 유지되면 현재 데이터셋 경로로 연결됩니다. JSON의 이전 절대 경로를 수정할 필요가 없습니다. 데이터 내용과 split의 일치 여부는 확인해야 합니다.
+
+경로는 **viewer 서버의 파일시스템 기준**입니다. 서버는 명시적으로 등록한 데이터셋 루트 안의 `image.jpg`만 제공합니다. 데이터셋을 연결하면 원본 RGB를 표시하므로 평가 입력의 resize/crop 미리보기와 다를 수 있으며 화면에 구분해 표시합니다. 경로를 비우면 기존 서버 보고서의 저장된 미리보기를 사용합니다. 브라우저에서 직접 불러온 JSON은 인접 `sample_images` 폴더를 읽을 수 없으므로 데이터셋 연결이 필요합니다. 직접 선택한 JSON은 새로고침 후 다시 선택해야 하며 태그는 기존처럼 브라우저에 유지됩니다.
