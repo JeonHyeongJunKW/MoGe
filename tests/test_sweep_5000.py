@@ -47,6 +47,44 @@ class SweepTests(unittest.TestCase):
                                 for g in groups for pattern in g['params']['include']))
         self.assertEqual(self.base['data']['image_augmentation'], ['jittering'])
 
+    def test_backbone_sweep_groups_and_commands(self):
+        manifest = json.loads((REPO / 'configs/experiments/gaemi_backbone_sweep_1500.json').read_text())
+        self.assertEqual(len(manifest['experiments']), 7)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'sweep'
+            subprocess.run([str(REPO / 'run_script/run_gaemi_backbone_sweep_1500.sh'),
+                            '--dry-run', '--root', str(root)], check=True, capture_output=True)
+            for e in manifest['experiments']:
+                config, batch, accumulation = resolve_experiment(self.base, e, 200, 32, 1)
+                self.assertEqual((batch, accumulation), (8, 4))
+                self.assertEqual(config['loss'], self.base['loss'])
+                self.assertEqual([d['path'] for d in config['data']['datasets']],
+                                 [d['path'] for d in self.base['data']['datasets']])
+                groups = config['optimizer']['params']
+                matches = [g for g in groups if any(fnmatch.fnmatch('encoder.backbone.blocks.11.attn.qkv.weight', p)
+                                                   for p in g['params']['include'])]
+                self.assertEqual(len(matches), int(e['train_backbone_last_n_blocks'] > 0))
+                if matches:
+                    self.assertEqual(matches[0]['lr'], e['learning_rates']['backbone'])
+                self.assertEqual(len(config['lr_scheduler']['params']['lr_lambda']), len(groups))
+                cmd = json.loads((root / e['name'] / 'command.json').read_text())
+                for flag, value in {'--train_backbone_last_n_blocks': str(e['train_backbone_last_n_blocks']),
+                                    '--num_iterations': '1500', '--batch_size_forward': '8',
+                                    '--gradient_accumulation_steps': '4', '--checkpoint': 'none'}.items():
+                    self.assertEqual(cmd[cmd.index(flag) + 1], value)
+                self.assertIn('--val_config', cmd)
+            self.assertTrue((root / 'pretrained_baseline' / 'command.json').exists())
+
+    def test_backbone_requires_count_and_rate_together(self):
+        original = self.manifest['experiments'][1]
+        for count, rate in ((2, None), (0, 1e-6), (-1, 1e-6), (True, 1e-6)):
+            e = copy.deepcopy(original)
+            e['train_backbone_last_n_blocks'] = count
+            if rate is not None:
+                e['learning_rates']['backbone'] = rate
+            with self.assertRaises(ValueError):
+                resolve_experiment(self.base, e, 200, 32, 1)
+
     def test_reject_unsafe_or_unsupervised_configuration(self):
         e = self.manifest['experiments'][1]
         with self.assertRaisesRegex(ValueError, 'divisible'):

@@ -1,0 +1,100 @@
+{
+    "base_config": "configs/train/gaemi_moge2_vits_small_augmentation.json",
+    "validation_config": "configs/validation/gaemi_moge2_vits_sweep_5000.json",
+    "num_iterations": 1500,
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "experiments": [
+        {
+            "name": "neck_heads_frozen_backbone_1500",
+            "train_backbone_last_n_blocks": 0,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "backbone_last2_lr1e-7_1500",
+            "train_backbone_last_n_blocks": 2,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-07
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "backbone_last2_lr3e-7_1500",
+            "train_backbone_last_n_blocks": 2,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 3e-07
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "backbone_last2_lr1e-6_1500",
+            "train_backbone_last_n_blocks": 2,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "backbone_last4_lr1e-7_1500",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-07
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "backbone_last4_lr3e-7_1500",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 3e-07
+            },
+            "batch_size_forward": 8
+        },
+        {
+            "name": "backbone_last4_lr1e-6_1500",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06
+            },
+            "batch_size_forward": 8
+        }
+    ]
+}

@@ -21,10 +21,15 @@ def write_json(path, data):
 def resolve_experiment(base, experiment, warmup_steps, effective_batch, processes, batch_override=None):
     """Build disjoint optimizer groups with one scheduler multiplier per group."""
     rates = experiment['learning_rates']
-    if not rates or set(rates) - set(COMPONENTS):
+    if not rates or set(rates) - (set(COMPONENTS) | {'backbone'}):
         raise ValueError(f'Invalid trainable components: {rates}')
     if any(not math.isfinite(lr) or lr <= 0 for lr in rates.values()):
         raise ValueError('Learning rates must be positive and finite')
+    blocks = experiment.get('train_backbone_last_n_blocks', 0)
+    if type(blocks) is not int or blocks < 0:
+        raise ValueError('train_backbone_last_n_blocks must be a non-negative integer')
+    if (blocks > 0) != ('backbone' in rates):
+        raise ValueError('A positive backbone block count and backbone learning rate must be specified together')
     batch = batch_override if batch_override is not None else experiment['batch_size_forward']
     if batch < 1 or processes < 1 or effective_batch < 1 or effective_batch % (batch * processes):
         raise ValueError('effective_batch_size must be divisible by batch_size_forward * num_processes')
@@ -47,6 +52,12 @@ def resolve_experiment(base, experiment, warmup_steps, effective_batch, processe
         group = copy.deepcopy(template)
         group.update(name=name, lr=rates[name], params={'include': [f'*{name}.*']})
         groups.append(group)
+    if blocks:
+        backbone_template = next((g for g in base['optimizer']['params'] if g['name'] == 'backbone'), template)
+        group = copy.deepcopy(backbone_template)
+        group.update(name='backbone', lr=rates['backbone'], params={'include': ['encoder.backbone.*']})
+        groups.append(group)
+    config['train_backbone_last_n_blocks'] = blocks
     for head, loss in [('normal_head', 'normal'), ('mask_head', 'mask')]:
         if head in rates:
             for dataset in config['data']['datasets']:
@@ -91,7 +102,9 @@ def summarize(root, runs, dry_run, smoke):
         metrics = best.get('metrics', {}).get('mean', {})
         memory_path = folder / 'training_memory.json'
         memory = json.loads(memory_path.read_text()) if memory_path.exists() else {}
+        run_config = json.loads((folder / 'train_config.json').read_text())
         rows.append({'experiment': name,
+                     'backbone_last_n_blocks': run_config.get('train_backbone_last_n_blocks', 0),
                      'status': 'dry_run' if dry_run else ('ok' if code == 0 else f'failed({code})'),
                      'batch': f'{batch} x {accumulate}',
                      'learning_rates': ', '.join(f'{k}={v:g}' for k, v in rates.items()),
@@ -167,7 +180,7 @@ def main():
     write_json(root / 'validation_config.json', validation)
     write_json(root / 'invocation.json', {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()})
 
-    def command(directory, rates, batch, accumulation, baseline=False):
+    def command(directory, rates, batch, accumulation, baseline=False, backbone_blocks=0):
         cmd = [sys.executable, '-u', '-m', 'accelerate.commands.launch', '--num_processes', str(args.num_processes),
                '--module', 'moge.train.train_moge12', '--config', str(directory / 'train_config.json'),
                '--initial_checkpoint', str(args.pretrained.resolve()), '--checkpoint', 'none',
@@ -179,6 +192,7 @@ def main():
                '--rolling_checkpoint_every', '0' if args.smoke or baseline else '500',
                '--log_every', '1' if args.smoke else '50', '--log_type', 'tensorboard',
                '--tb_log_root', str(root / 'tensorboard'), '--vis_every', '0', '--num_vis_images', '0']
+        cmd += ['--train_backbone_last_n_blocks', str(backbone_blocks)]
         for name in COMPONENTS:
             cmd += ['--train_' + name, str(name in rates)]
         if not args.smoke:
@@ -195,13 +209,13 @@ def main():
         directory.mkdir()
         write_json(directory / 'train_config.json', config)
         rates = resolved[0][0]['learning_rates']
-        code = execute(command(directory, rates, batch, accumulation, baseline=True), directory, args.dry_run)
+        code = execute(command(directory, rates, batch, accumulation, baseline=True, backbone_blocks=config['train_backbone_last_n_blocks']), directory, args.dry_run)
         runs.append((directory.name, {}, batch, accumulation, code))
     for experiment, config, batch, accumulation in resolved:
         directory = root / experiment['name']
         directory.mkdir()
         write_json(directory / 'train_config.json', config)
-        code = execute(command(directory, experiment['learning_rates'], batch, accumulation), directory, args.dry_run)
+        code = execute(command(directory, experiment['learning_rates'], batch, accumulation, backbone_blocks=config['train_backbone_last_n_blocks']), directory, args.dry_run)
         runs.append((directory.name, experiment['learning_rates'], batch, accumulation, code))
         summarize(root, runs, args.dry_run, args.smoke)
     print(f'Results: {root}')
