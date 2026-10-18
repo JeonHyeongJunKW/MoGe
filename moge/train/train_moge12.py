@@ -77,7 +77,8 @@ if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
 @click.option('--enable_ema', type=bool, default=True, help='Maintain an exponential moving average of model weights')
 @click.option('--train_scale_head', type=bool, default=True, show_default=True, help='MoGe-2: train the metric scale MLP head; False freezes its parameters')
 @click.option('--train_points_head', type=bool, default=True, show_default=True, help='MoGe-2: train the affine-invariant point map Conv head; False freezes its parameters')
-@click.option('--train_neck', type=bool, default=False, show_default=True, help='MoGe-2: train the shared convolutional neck; encoder remains frozen')
+@click.option('--train_backbone_last_n_blocks', type=click.IntRange(min=0), default=0, show_default=True, help='MoGe-2: unfreeze the last N DINOv2 transformer blocks; 0 freezes the entire backbone')
+@click.option('--train_neck', type=bool, default=False, show_default=True, help='MoGe-2: train the shared convolutional neck; backbone is controlled separately')
 @click.option('--train_normal_head', type=bool, default=False, show_default=True, help='MoGe-2: train the normal Conv head')
 @click.option('--train_mask_head', type=bool, default=False, show_default=True, help='MoGe-2: train the validity-mask Conv head')
 @click.option('--val_config', type=click.Path(exists=True, dir_okay=False), default=None, help='MoGe-2 validation JSON; overrides the training config validation section')
@@ -110,6 +111,7 @@ def main(
     train_scale_head: bool,
     train_points_head: bool,
     train_neck: bool,
+    train_backbone_last_n_blocks: int,
     train_normal_head: bool,
     train_mask_head: bool,
     val_config: Optional[str],
@@ -135,9 +137,10 @@ def main(
     if gradient_accumulation_steps < 1:
         raise ValueError(f'--gradient_accumulation_steps must be at least 1, got {gradient_accumulation_steps}')
     if config['model_version'] != 'v2' and (
-        not train_scale_head or not train_points_head or train_neck or train_normal_head or train_mask_head
+        not train_scale_head or not train_points_head or train_neck or train_normal_head or train_mask_head or train_backbone_last_n_blocks
     ):
-        raise ValueError('Decoder finetuning flags are only supported for MoGe-2')
+        raise ValueError('Finetuning flags are only supported for MoGe-2')
+    config['train_backbone_last_n_blocks'] = train_backbone_last_n_blocks
     config['trainable_heads'] = {
         'scale_head': train_scale_head, 'points_head': train_points_head,
         'neck': train_neck, 'normal_head': train_normal_head, 'mask_head': train_mask_head,
@@ -173,9 +176,9 @@ def main(
         model_class = import_model_class_by_version(config['model_version'])
         model = model_class(**config['model'])
     # Freeze before constructing EMA, optimizer groups and the distributed wrapper.
-    # MoGe-2 finetunes only selected decoder components; the encoder stays frozen.
+    # MoGe-2 trains selected decoder components and optional trailing DINOv2 blocks.
     if config['model_version'] == 'v2':
-        configure_moge2_heads(model, config['trainable_heads'])
+        configure_moge2_heads(model, config['trainable_heads'], train_backbone_last_n_blocks)
     print(f'Total parameters: {sum(p.numel() for p in model.parameters())}')
     print(f'Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
 
@@ -249,7 +252,7 @@ def main(
 
     model.train()
     if config['model_version'] == 'v2':
-        set_moge2_head_training_modes(accelerator.unwrap_model(model), config['trainable_heads'])
+        set_moge2_head_training_modes(accelerator.unwrap_model(model), config['trainable_heads'], train_backbone_last_n_blocks)
 
     with (
         train_data_pipe,

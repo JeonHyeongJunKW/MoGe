@@ -225,16 +225,16 @@ The `train_moge12` entry point accepts independent boolean options:
 
 For example, add `--train_scale_head True --train_points_head False` to the
 finetuning command above to train the scale head while freezing the point head.
-At least one decoder component must remain trainable. These are command-line options; the effective
+At least one decoder component or backbone block must remain trainable. These are command-line options; the effective
 values are recorded in the workspace config under `trainable_heads`.
 
 For MoGe-2, all other modules are frozen by default: the entire encoder (including
-feature projections), neck, normal head and mask head. The encoder always remains
-frozen under this policy. Only explicitly selected decoder components are included
-in the optimizer. Frozen modules stay in eval mode while selected components use
+feature projections), neck, normal head and mask head. The optional backbone
+block selection below overrides freezing for those blocks only. Only explicitly
+selected components are included in the optimizer. Frozen modules stay in eval mode while selected components use
 train mode. A frozen head can still pass gradients into a trainable neck; freezing
 its parameters does not detach its input. Losses remain enabled for logging and
-supervision. All five options set to `False` are rejected. MoGe-1 training behavior
+supervision. All five options set to `False` are rejected unless backbone blocks are selected. MoGe-1 training behavior
 is unchanged. For the 5000-step E versus neck/all-heads experiment, see
 [the sweep guide](sweep_5000.md).
 
@@ -245,6 +245,57 @@ To change which heads are trained, start in a new workspace with
 `--checkpoint none --initial_checkpoint PATH_TO_MODEL.pt`, using a model-only
 checkpoint (for example, a pretrained checkpoint or the saved `00001000.pt` model
 shard), rather than a checkpoint containing optimizer state.
+
+### Unfreezing the last DINOv2 blocks
+
+Add `--train_backbone_last_n_blocks 2` to a `train_moge12` command to train
+the last two transformer blocks along with the decoder components selected above.
+The default is `0`, preserving the frozen backbone. For ViT-S with 12 blocks,
+`2` selects blocks 10 and 11 (zero-based). Negative values and values larger
+than the number of blocks are rejected.
+
+Patch embedding, position/class/register tokens, the final backbone norm, and
+encoder output projections remain frozen. Selected blocks use train mode; the
+remaining encoder stays in eval mode. Gradient checkpointing is supported.
+The effective CLI value is saved as `train_backbone_last_n_blocks` in the run config;
+set it explicitly again when resuming.
+
+The optimizer must include the selected backbone parameters. For example,
+`configs/train/gaemi_moge2_vits_small_augmentation.json` already has a dedicated
+backbone group at LR `1e-6`. For a custom decoder-only configuration, add a group:
+
+```json
+{
+  "name": "backbone",
+  "type": "AdamW",
+  "params": {"include": ["*.backbone.*"]},
+  "lr": 1e-6
+}
+```
+
+Exclude `*.backbone.*` from any catch-all decoder group to avoid duplicate
+assignments. If the scheduler uses a list of per-group functions, add the
+backbone schedule to that list as well. Decoder-only sweep-generated configs
+do not automatically gain a backbone optimizer group.
+
+For example, to train the neck, all heads and the final two backbone blocks,
+use these options with your existing training command and a config containing
+the backbone optimizer group:
+
+```bash
+--train_backbone_last_n_blocks 2 \
+--train_neck True \
+--train_scale_head True --train_points_head True \
+--train_normal_head True --train_mask_head True \
+--enable_gradient_checkpointing True
+```
+
+When changing the trainable blocks, use a new workspace with
+`--checkpoint none --initial_checkpoint PATH_TO_MODEL.pt` and a model-only
+checkpoint, rather than restoring an optimizer from a different freeze policy.
+Check `optimizer_param_assignments.tsv` for the selected block names and LR.
+Unfreezing blocks increases activation memory; recheck the micro-batch size
+with a short run before starting a full experiment.
 
 ### Validation during MoGe-2 training
 
