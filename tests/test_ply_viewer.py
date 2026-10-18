@@ -9,6 +9,9 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
+from urllib.request import Request
+from unittest.mock import patch
+from types import SimpleNamespace
 
 from tools.ply_viewer.server import Handler
 
@@ -27,7 +30,9 @@ class ViewerTests(unittest.TestCase):
         self.data_root = self.base / 'dataset'
         (self.data_root / 'sample').mkdir(parents=True)
         (self.data_root / 'sample' / 'image.jpg').write_bytes(b'original RGB')
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, root=self.root, data_roots=[self.data_root]))
+        self.checkpoint = self.base / 'model.pt'
+        self.checkpoint.write_bytes(b'fixture')
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, root=self.root, data_roots=[self.data_root], checkpoint=self.checkpoint))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.server.server_port}'
@@ -62,6 +67,30 @@ class ViewerTests(unittest.TestCase):
                                (self.data_root, 'escape/image.jpg')]:
             with self.assertRaises(HTTPError):
                 self.get(route + urlencode({'root': str(root), 'filename': filename}))
+
+    def test_pointcloud_cache_and_origin_boundary(self):
+        for name in ('depth.png', 'meta.json'):
+            (self.data_root / 'sample' / name).write_bytes(b'fixture')
+        report = self.root / 'per_image_step_00000000.json'
+        report.write_text(json.dumps({'metadata': {'config': {}, 'checkpoint': str(self.checkpoint)},
+                                     'samples': [{'dataset': 'val', 'filename': 'sample', 'dataset_root': str(self.data_root)}]}))
+        payload = json.dumps({'report': report.name, 'index': 0}).encode()
+
+        def infer(cmd, **kwargs):
+            cache = Path(cmd[cmd.index('--output') + 1])
+            (cache / 'sample').mkdir()
+            (cache / 'complete.json').write_text(json.dumps({'sample': 'sample'}))
+            return SimpleNamespace(returncode=0)
+
+        with patch('tools.ply_viewer.server.subprocess.run', side_effect=infer) as run:
+            def post():
+                with urlopen(Request(self.url + '/api/pointcloud', data=payload)) as response:
+                    return json.load(response)
+            self.assertEqual(post(), post())
+            self.assertEqual(run.call_count, 1)
+        with self.assertRaises(HTTPError) as error:
+            urlopen(Request(self.url + '/api/pointcloud', data=payload, headers={'Origin': 'http://foreign.example'}))
+        self.assertEqual(error.exception.code, 403)
 
     def test_image_reports_and_preview_boundary(self):
         directory = self.root / 'validation'

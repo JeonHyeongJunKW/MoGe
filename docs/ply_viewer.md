@@ -130,3 +130,31 @@ workspace/validation_loss/neck_best/validation/per_image_step_00000000.csv
 3. 다른 PC에서 생성한 JSON도 상대 `filename` 구조가 유지되면 현재 데이터셋 경로로 연결됩니다. JSON의 이전 절대 경로를 수정할 필요가 없습니다. 데이터 내용과 split의 일치 여부는 확인해야 합니다.
 
 경로는 **viewer 서버의 파일시스템 기준**입니다. 서버는 명시적으로 등록한 데이터셋 루트 안의 `image.jpg`만 제공합니다. 데이터셋을 연결하면 원본 RGB를 표시하므로 평가 입력의 resize/crop 미리보기와 다를 수 있으며 화면에 구분해 표시합니다. 경로를 비우면 기존 서버 보고서의 저장된 미리보기를 사용합니다. 브라우저에서 직접 불러온 JSON은 인접 `sample_images` 폴더를 읽을 수 없으므로 데이터셋 연결이 필요합니다. 직접 선택한 JSON은 새로고침 후 다시 선택해야 하며 태그는 기존처럼 브라우저에 유지됩니다.
+
+### 선택한 이미지의 GT / Prediction을 3D로 보기
+
+노트북에서 다음 설정으로 viewer를 실행합니다. 서버 자체는 기본 Python을 사용하고, 선택 이미지의 추론만 `.venv-eval` 환경에서 실행합니다.
+
+```bash
+./run.sh \
+  --data-root /home/jeon/gaemi_simulations/datasets/mono-depth \
+  --checkpoint /home/jeon/Downloads/best_all_neck.pt \
+  --inference-python /home/jeon/MoGe/.venv-eval/bin/python
+```
+
+1. 이미지별 오차 분석 화면에서 **서버 결과 A**를 불러옵니다. 현재는 `analyze_validation`으로 생성한 평가 설정 포함 보고서를 지원합니다. JSON을 파일 선택으로 불러왔다면 workspace에 복사하고 서버 결과 목록에서 다시 선택하세요.
+2. 목록에서 이미지를 고르고 **A · GT / Prediction 3D 보기**를 누릅니다. B도 해당 결과의 모델로 서버를 실행한 경우 사용할 수 있습니다.
+3. 화면 아래에 트랙볼 3D viewer가 열립니다. 드래그로 회전, Shift+드래그/우클릭으로 이동, 휠로 확대·축소합니다. Shift+휠은 미세 조절입니다. 나란히 보기에서는 두 카메라가 동기화되며, 겹쳐 보기에서는 GT 청록 / Prediction 주황으로 표시합니다.
+4. 먼 배경 때문에 작게 보이면 **최대 깊이 50 → 전체 맞춤**을 사용하세요. 이 값은 표시 범위만 바꾸며 평가 결과를 변경하지 않습니다. 카메라 XYZ축은 원본 핀홀 카메라 기준입니다.
+
+기존 지표 JSON에 예측 점군은 없으므로 선택 이미지를 같은 평가 전처리와 해상도로 다시 추론합니다. GT는 GT depth/intrinsics, Prediction은 모델이 복원한 points/intrinsics를 사용하며 좌표나 scale을 추가 정렬하지 않습니다. 학습 당시 저장된 예측을 재생하는 것은 아니므로 기기/정밀도 차이에 따라 미세한 차이가 있을 수 있습니다. info.json에 원본 지표와 재추론 depth 지표, 사용 checkpoint를 기록합니다.
+
+한 번에 한 이미지씩 생성하며 최대 50,000개의 유효 GT 픽셀을 균등 선택해 대응 Prediction 점을 표시합니다. 결과는 `workspace/pointcloud_cache/<hash>/`에 저장하고 재사용합니다. report/checkpoint/원본 RGB·depth·meta 파일의 경로·크기·수정시각이 바뀌면 새 cache를 만듭니다. 실행 실패 시 표시되는 cache 폴더의 `inference.log`를 확인하세요. 서버는 원본 데이터와 평가 보고서를 수정하지 않으며, `--checkpoint`를 지정한 경우에만 요청 시 cache를 생성합니다.
+
+### Train / validation 분포 비교
+
+A에 train 평가, B에 validation 평가를 선택하고 **비교 방식 → 서로 다른 데이터셋 분포 비교**를 선택합니다. 이 모드는 이미지 교집합을 요구하지 않으며 각 데이터셋의 모든 평가 샘플을 독립적으로 집계합니다. 히스토그램은 표본 수가 달라도 비교할 수 있도록 각 데이터셋 내 비율(%)로 표시하고, 평균/P50/P90에는 해당 표본 수를 함께 표시합니다. 목록의 `[A]`/`[B]`는 이미지 출처이며 서로 다른 이미지끼리의 B−A는 계산하지 않습니다. 개별 RGB와 3D 버튼은 선택한 이미지가 속한 쪽을 사용하세요.
+
+그룹을 **환경** 또는 **카메라**로 설정하면 조건별 train/validation 평균 차이를 볼 수 있습니다. 그룹의 이미지 수는 A / B로 표시합니다. 그룹 평균 차이는 서로 다른 집단의 차이이며, 동일 이미지의 개선량은 아닙니다. Town 구성이나 깊이 분포가 다르면 그 차이도 반영됩니다. 기존 동일 이미지 실험 비교는 기본 **동일 이미지 비교** 모드를 사용합니다.
+
+노트북 train 시험 평가는 21,600장 중 seed 0으로 Town·환경·카메라 비율을 유지해 1,000장을 추출했습니다. split과 그룹별 추출 개수는 `workspace/validation_loss/train_sample_1000_20261016/train_sample.txt`, `sampling.json`에 기록했습니다. augmentation 없이 validation과 동일한 전처리/해상도로 평가하므로 학습 중 loss가 아니라 train 이미지에서의 평가 지표입니다.

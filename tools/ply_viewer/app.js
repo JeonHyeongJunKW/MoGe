@@ -1,6 +1,8 @@
 import {parsePLY} from './ply.js';
 import {rotate, sphere, trackball, dot} from './trackball.js';
 const $ = id => document.getElementById(id);
+const urlOptions=new URLSearchParams(location.search);
+if(urlOptions.get('embed')==='1')document.body.classList.add('embedded');
 const status = (text, error = false) => { $('status').textContent = text; $('status').classList.toggle('error', error); };
 const camera = {target: [0, 0, 0], distance: 5, orientation: [0, 0, 0, 1], radius: 1};
 let clouds = [], samples = [], requestID = 0;
@@ -229,5 +231,5 @@ try{
     }
     loadLocalFiles();
   });
-  new ResizeObserver(draw).observe($('views'));draw();refresh();
+  new ResizeObserver(draw).observe($('views'));draw();refresh().then(()=>{const sample=urlOptions.get('sample');if(sample&&samples.includes(sample)){$('sample').value=sample;loadSample();}else if(sample){status('해당 3D 결과를 찾을 수 없습니다. --root를 확인하세요.',true);}});
 }catch(e){status(e.message,true);}

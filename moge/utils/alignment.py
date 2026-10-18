@@ -340,7 +340,9 @@ def align_points_scale_xyz_shift(points_src: torch.Tensor, points_tgt: torch.Ten
 
         # Solve optimal scale and shift for each anchor
         MAX_ELEMENTS = 2 ** 20
-        scale, loss, index = split_batch_fwd(align, MAX_ELEMENTS // 2, points_src_anchored.flatten(-2), points_tgt_anchored.flatten(-2), weight_anchored.flatten(-2), trunc)   # (anchors,)
+        # Each anchor contains n XYZ points, not two scalar elements.
+        # Bound the sorting workspace without changing the candidate anchors.
+        scale, loss, index = split_batch_fwd(align, max(1, MAX_ELEMENTS // (3 * n)), points_src_anchored.flatten(-2), points_tgt_anchored.flatten(-2), weight_anchored.flatten(-2), trunc)   # (anchors,)
 
         # Get optimal scale and shift for each batch element
         loss, index_anchor = scatter_min(size=batch_size, dim=0, index=anchor_where_batch, src=loss)    # (batch_size,)

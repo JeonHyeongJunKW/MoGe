@@ -2,6 +2,11 @@
 import argparse
 import json
 import mimetypes
+import hashlib
+import os
+import subprocess
+import sys
+import threading
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -10,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 STATIC = Path(__file__).resolve().parent
 DEFAULT_ROOT = STATIC.parents[1] / 'workspace'
 ASSETS = {'gt.ply', 'pred.ply', 'image.png', 'info.json'}
+INFERENCE_LOCK = threading.Lock()
 
 
 def inside(root, relative):
@@ -19,10 +25,84 @@ def inside(root, relative):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def __init__(self, *args, root, data_roots=(), **kwargs):
+    def __init__(self, *args, root, data_roots=(), checkpoint=None, inference_python=None, **kwargs):
         self.root = root
         self.data_roots = tuple(Path(p).resolve() for p in data_roots)
+        self.checkpoint = Path(checkpoint).resolve() if checkpoint else None
+        self.inference_python = str(inference_python or sys.executable)
         super().__init__(*args, **kwargs)
+
+    def do_POST(self):
+        if self.path != '/api/pointcloud':
+            self.send_error(404)
+            return
+        # Only same-origin UI requests can start local inference.
+        if self.headers.get('Origin') not in (None, 'http://' + self.headers.get('Host', '')):
+            self.send_error(403)
+            return
+        acquired = False
+        try:
+            if not self.checkpoint:
+                raise ValueError('서버 실행 시 --checkpoint와 --inference-python을 지정하세요.')
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= 16384:
+                raise ValueError('Invalid request size')
+            request = json.loads(self.rfile.read(size))
+            report_path = inside(self.root, request['report'])
+            if not report_path.name.startswith('per_image_step_') or report_path.suffix != '.json':
+                raise ValueError('서버에 저장된 이미지별 보고서를 선택하세요.')
+            report = json.loads(report_path.read_text())
+            index = request['index']
+            if type(index) is not int or not 0 <= index < len(report['samples']):
+                raise ValueError('Invalid sample index')
+            sample = report['samples'][index]
+            root = Path(request.get('data_root') or sample.get('dataset_root', '')).resolve()
+            if root not in self.data_roots:
+                raise ValueError('--data-root로 등록한 데이터셋 경로를 선택하세요.')
+            folder = inside(root, sample['filename'])
+            metadata = report.get('metadata', {})
+            if 'config' not in metadata and (report_path.parent / 'summary.json').is_file():
+                metadata = json.loads((report_path.parent / 'summary.json').read_text())
+            if 'config' not in metadata:
+                raise ValueError('평가 config가 없습니다. analyze_validation으로 만든 보고서를 사용하세요.')
+            expected = metadata.get('checkpoint')
+            if expected and Path(expected).is_file() and Path(expected).resolve() != self.checkpoint:
+                raise ValueError('보고서와 서버의 checkpoint가 다릅니다. 해당 모델로 서버를 실행하세요.')
+            def stamp(path):
+                stat = path.stat()
+                return [str(path), stat.st_size, stat.st_mtime_ns]
+            identity = [stamp(report_path), stamp(self.checkpoint), index, str(root),
+                        *[stamp(inside(root, folder / name)) for name in ('image.jpg', 'depth.png', 'meta.json')]]
+            digest = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+            cache = inside(self.root, 'pointcloud_cache/' + digest)
+            marker = cache / 'complete.json'
+            if not marker.is_file():
+                acquired = INFERENCE_LOCK.acquire(blocking=False)
+                if not acquired:
+                    raise ValueError('다른 이미지의 3D 생성 중입니다. 잠시 후 다시 눌러주세요.')
+                cache.mkdir(parents=True, exist_ok=True)
+                cmd = [self.inference_python, '-m', 'moge.scripts.export_sample_pointcloud',
+                       '--report', str(report_path), '--index', str(index), '--checkpoint', str(self.checkpoint),
+                       '--data-root', str(root), '--output', str(cache)]
+                env = {**os.environ, 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2',
+                       'MOGE_NUM_LOAD_WORKERS': '2', 'MOGE_NUM_PROCESS_WORKERS': '2'}
+                with (cache / 'inference.log').open('w') as log:
+                    result = subprocess.run(cmd, cwd=STATIC.parents[1], env=env, stdout=log,
+                                            stderr=subprocess.STDOUT, timeout=120)
+                if result.returncode or not marker.is_file():
+                    raise ValueError(f'3D 생성 실패. 로그: {cache / "inference.log"}')
+            destination = inside(self.root, cache / json.loads(marker.read_text())['sample'])
+            self.send_bytes(json.dumps({'sample': destination.relative_to(self.root).as_posix()}).encode(), 'application/json')
+        except (ValueError, KeyError, IndexError, TypeError, OSError, subprocess.TimeoutExpired) as error:
+            data = json.dumps({'error': str(error)}, ensure_ascii=False).encode()
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        finally:
+            if acquired:
+                INFERENCE_LOCK.release()
 
     def do_GET(self):
         url = urlsplit(self.path)
@@ -121,11 +201,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT, help='Directory to scan recursively for gt.ply + pred.ply')
     parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--checkpoint', type=Path, help='Model for on-demand point cloud generation')
+    parser.add_argument('--inference-python', type=Path, help='Python interpreter with MoGe evaluation dependencies')
     parser.add_argument('--data-root', type=Path, action='append', default=[], help='Dataset RGB root; repeat for multiple datasets')
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     root = args.root.resolve()
-    server = ThreadingHTTPServer((args.host, args.port), partial(Handler, root=root, data_roots=args.data_root))
+    server = ThreadingHTTPServer((args.host, args.port), partial(Handler, root=root, data_roots=args.data_root,
+                                                             checkpoint=args.checkpoint, inference_python=args.inference_python))
     print(f'PLY viewer: http://{args.host}:{server.server_port}\nResults root: {root}', flush=True)
     try:
         server.serve_forever()
