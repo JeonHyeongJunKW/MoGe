@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from .depth_bins import (
-    DepthBinAccumulator, depth_bin_report, format_depth_bin_report,
+    DepthBinAccumulator, depth_bin_report,
     validate_depth_bins, write_depth_bin_report,
 )
 
@@ -283,8 +283,6 @@ class ValidationRunner:
         logger.log_validation(scalars, step)
         print(f'[Validation step {step}] {self.monitor}={score:.6g}, best={self.best_score:.6g}'
               + (' (saved best.pt)' if improved else ''))
-        if depth_report is not None:
-            tqdm.write(format_depth_bin_report(depth_report))
 
     def run(self, model, accelerator, model_config, step, logger):
         """Called on every rank; only rank zero evaluates the unwrapped model."""

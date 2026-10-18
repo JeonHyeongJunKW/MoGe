@@ -37,8 +37,9 @@ parameters and encoder output projections remain frozen.
 The data composition, split paths, losses, resolution, and no-augmentation policy
 match the existing neck batch128 sweep. No glass/fence samples are removed.
 Validation uses the existing complete `.val.txt`, batch 8, every 250 steps
-(249, 499, 749, 999, 1249, 1499), with per-image metrics, 1m depth bins,
-and PLY output for eight samples. An initial pretrained evaluation runs once
+(249, 499, 749, 999, 1249, 1499), with per-image metrics
+and PLY output for eight samples. Depth-bin calculation, CSV/JSON export, and terminal tables are disabled by default
+(`depth_bins: null`). An initial pretrained evaluation runs once
 in addition to the seven training experiments; `--skip-baseline` skips it.
 
 Useful commands:
