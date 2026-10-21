@@ -1,0 +1,100 @@
+{
+    "base_config": "configs/train/gaemi_moge2_robot160.json",
+    "validation_config": "configs/validation/gaemi_moge2_robot160.json",
+    "num_iterations": 3000,
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "experiments": [
+        {
+            "name": "robot160_clean_3000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [],
+            "flip_augmentation": false
+        },
+        {
+            "name": "robot160_flip_3000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [],
+            "flip_augmentation": true
+        },
+        {
+            "name": "robot160_flip_motion_mild_3000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true
+        },
+        {
+            "name": "robot160_flip_motion_strong_3000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.5,
+                    "kernel_sizes": [
+                        5,
+                        9,
+                        13,
+                        17
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true
+        }
+    ],
+    "data_root": "/home/coder/dataset"
+}

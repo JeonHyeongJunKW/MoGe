@@ -148,6 +148,13 @@ def image_color_augmentation(image: np.ndarray, augmentations: List[Dict[str, An
         if rng.uniform() < 0.5: 
             image = cv2.imdecode(cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, rng.integers(20, 100)])[1], cv2.IMREAD_COLOR)
     
+    for augmentation in augmentations:
+        if isinstance(augmentation, dict):
+            if augmentation.get('type') != 'motion_blur':
+                raise ValueError(f'Unknown image augmentation: {augmentation}')
+            from .motion_blur import motion_blur
+            image = motion_blur(image, augmentation, rng)
+
     return image
 
 

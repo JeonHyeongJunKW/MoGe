@@ -1,0 +1,27 @@
+{
+    "every": 250,
+    "monitor": "depth_metric/rel",
+    "mode": "min",
+    "metric_groups": "global,metric",
+    "resolution_level": 0,
+    "batch_size": 8,
+    "max_samples": null,
+    "seed": 0,
+    "visualization": {
+        "num_samples": 8,
+        "max_points": 50000
+    },
+    "datasets": {
+        "gaemi_sim_val": {
+            "path": "/home/coder/dataset/20261017_train",
+            "split": ".review-versions/reviewed_20261018_v1/.val.txt",
+            "width": 640,
+            "height": 360,
+            "depth": "depth.png",
+            "depth_unit": 1.0,
+            "drop_max_depth": 1000.0
+        }
+    },
+    "depth_bins": null,
+    "per_image_metrics": true
+}

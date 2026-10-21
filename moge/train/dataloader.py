@@ -103,6 +103,13 @@ class TrainDataLoaderPipeline:
         self.fov_range_relative = config.get('fov_range_relative', 0.0)
         self.center_augmentation = config.get('center_augmentation', 0.0)
         self.image_augmentation = config.get('image_augmentation', [])
+        from ..utils.motion_blur import validate_motion_blur
+        for scope in [config, *config['datasets']]:
+            for augmentation in scope.get('image_augmentation', []):
+                if isinstance(augmentation, dict):
+                    if augmentation.get('type') != 'motion_blur':
+                        raise ValueError(f'Unknown image augmentation: {augmentation}')
+                    validate_motion_blur(augmentation)
         # Keep these switches independent so a dataset can opt into a plain
         # resize without a perspective crop, or preserve the source pixels
         # entirely. Defaults retain the historical behavior for old configs.
@@ -388,7 +395,9 @@ class TrainDataLoaderPipeline:
                 tgt_image = np.flip(tgt_image, axis=1).copy()
                 tgt_depth = np.flip(tgt_depth, axis=1).copy()
                 tgt_normal = np.flip(tgt_normal, axis=1).copy() * [-1, 1, 1]
-                # NOTE: if cx != 0.5, flip intrinsics accordingly. 
+                tgt_intrinsics = tgt_intrinsics.copy()
+                tgt_intrinsics[0, 2] = 1.0 - tgt_intrinsics[0, 2]
+                tgt_intrinsics[0, 1] *= -1  # Reflect skew with the camera X axis.
             
             # Color augmentation
             image_augmentation = self.datasets[instance['dataset']].get('image_augmentation', self.image_augmentation)

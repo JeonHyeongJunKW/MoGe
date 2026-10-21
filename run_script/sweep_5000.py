@@ -37,11 +37,12 @@ def resolve_experiment(base, experiment, warmup_steps, effective_batch, processe
         raise ValueError('warmup_steps must be positive')
     config = copy.deepcopy(base)
     config.pop('validation', None)
-    config['data']['image_augmentation'] = []
+    augmentations = copy.deepcopy(experiment.get('image_augmentation', []))
+    config['data']['image_augmentation'] = augmentations
     for dataset in config['data']['datasets']:
-        dataset['image_augmentation'] = []
+        dataset['image_augmentation'] = copy.deepcopy(augmentations)
     for scope in [config['data'], *config['data']['datasets']]:
-        scope.update(flip_augmentation=False, perspective_warp=False, resize=False)
+        scope.update(flip_augmentation=experiment.get('flip_augmentation', False), perspective_warp=False, resize=False)
     groups = []
     template = next(g for g in config['optimizer']['params'] if g['name'] == 'head')
     for name in COMPONENTS:
@@ -154,7 +155,11 @@ def main():
         validation['batch_size'] = args.validation_batch_size
     if args.data_root:
         for dataset in [*base['data']['datasets'], *validation['datasets'].values()]:
-            dataset['path'] = str(args.data_root.resolve())
+            if manifest.get('data_root'):
+                relative = Path(dataset['path']).relative_to(manifest['data_root'])
+                dataset['path'] = str(args.data_root.resolve() / relative)
+            else:
+                dataset['path'] = str(args.data_root.resolve())
     iterations = args.num_iterations if args.num_iterations is not None else manifest['num_iterations']
     if iterations < 1:
         parser.error('--num-iterations must be positive')
