@@ -22,6 +22,7 @@ from .utils import wrap_module_with_gradient_checkpointing, unwrap_module_with_g
 from .modules.dinov2_encoder import DINOv2Encoder
 from .modules.mlp import MLP
 from .modules.conv_stack import ConvStack
+from .modules.rgb_detail import RGBDetailBranch
 
 
 class MoGeModel(nn.Module):
@@ -41,6 +42,7 @@ class MoGeModel(nn.Module):
         scale_head: Dict[str, Any] = None,
         remap_output: Literal['linear', 'sinh', 'exp', 'sinh_exp'] = 'linear',
         num_tokens_range: List[int] = [1200, 3600],
+        rgb_detail: Optional[Dict[str, Any]] = None,
         **deprecated_kwargs
     ):
         super(MoGeModel, self).__init__()
@@ -52,6 +54,19 @@ class MoGeModel(nn.Module):
         
         self.encoder = DINOv2Encoder(**encoder) 
         self.neck = ConvStack(**neck)
+        if rgb_detail is not None:
+            if not isinstance(rgb_detail, dict) or set(rgb_detail) - {'enabled', 'channels'}:
+                raise ValueError('rgb_detail accepts only enabled and channels')
+            if type(rgb_detail.get('enabled', False)) is not bool:
+                raise ValueError('rgb_detail.enabled must be a boolean')
+            if rgb_detail.get('enabled', False):
+                dims = neck['dim_res_blocks']
+                outputs = neck.get('dim_out')
+                feature_channels = [
+                    (outputs[i] if isinstance(outputs, (list, tuple)) else outputs) or dim
+                    for i, dim in enumerate(dims)
+                ]
+                self.rgb_detail = RGBDetailBranch(feature_channels, rgb_detail.get('channels', 16))
         if points_head is not None:
             self.points_head = ConvStack(**points_head) 
             self.points_head.fp32_output_projection = True  # Use fp32 for the final output projection for better surface reconstruction
@@ -149,6 +164,7 @@ class MoGeModel(nn.Module):
         module_dtype_map = [
             (self.encoder, dtype),
             (self.neck, torch.float32),
+            (getattr(self, 'rgb_detail', None), torch.float32),
             *((getattr(self, head, None), torch.float32) for head in ['points_head', 'normal_head', 'mask_head', 'scale_head']),
         ]
         self._autocast_handles = [
@@ -198,6 +214,8 @@ class MoGeModel(nn.Module):
 
         # Shared neck
         features = self.neck(features)
+        if hasattr(self, 'rgb_detail'):
+            features = self.rgb_detail(image, features)
 
         # Heads decoding
         points, normal, mask = (getattr(self, head)(features)[-1] if hasattr(self, head) else None for head in ['points_head', 'normal_head', 'mask_head'])

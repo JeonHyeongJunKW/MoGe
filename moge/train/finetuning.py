@@ -25,7 +25,7 @@ def _selected_backbone_blocks(model, count):
 
 def configure_moge2_heads(model, trainable_heads, train_backbone_last_n_blocks=0):
     selected_blocks = _selected_backbone_blocks(model, train_backbone_last_n_blocks)
-    allowed = {'neck', 'scale_head', 'points_head', 'normal_head', 'mask_head'}
+    allowed = {'neck', 'scale_head', 'points_head', 'normal_head', 'mask_head', 'rgb_detail'}
     if set(trainable_heads) - allowed:
         raise ValueError(f'Unsupported trainable components: {set(trainable_heads) - allowed}')
     if not any(trainable_heads.values()) and not selected_blocks:

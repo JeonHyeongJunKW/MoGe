@@ -11,6 +11,24 @@ from run_script.sweep_5000 import REPO, resolve_experiment
 
 
 class SweepTests(unittest.TestCase):
+    def test_rgb_detail_manifest_optimizer_group(self):
+        manifest = json.loads((REPO / 'configs/experiments/gaemi_robot160_rgb_detail.json').read_text())
+        base = json.loads((REPO / manifest['base_config']).read_text())
+        experiment = manifest['experiments'][0]
+        config, batch, accumulation = resolve_experiment(base, experiment, 200, 32, 1)
+        self.assertTrue(config['model']['rgb_detail']['enabled'])
+        self.assertNotIn('rgb_detail', base['model'])
+        groups = config['optimizer']['params']
+        matches = [g for g in groups if any(fnmatch.fnmatch('rgb_detail.stages.0.weight', p)
+                                          for p in g['params']['include'])]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]['lr'], experiment['learning_rates']['rgb_detail'])
+        self.assertEqual(batch * accumulation, 32)
+        broken = copy.deepcopy(experiment)
+        broken['rgb_detail']['enabled'] = False
+        with self.assertRaises(ValueError):
+            resolve_experiment(base, broken, 200, 32, 1)
+
     def test_progress_carriage_returns_and_exit_code_are_preserved(self):
         payload = '\rValidation 0/2\rValidation 1/2\rValidation 2/2\n완료\n'.encode()
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,0 +1,71 @@
+{
+    "base_config": "configs/train/gaemi_moge2_robot160.json",
+    "validation_config": "configs/validation/gaemi_moge2_robot160.json",
+    "num_iterations": 1500,
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "experiments": [
+        {
+            "name": "robot160_clean_rgb_c16_lr1e5_1500",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06,
+                "rgb_detail": 1e-05
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [],
+            "flip_augmentation": false,
+            "rgb_detail": {
+                "enabled": true,
+                "channels": 16
+            }
+        },
+        {
+            "name": "robot160_clean_rgb_c16_lr3e5_1500",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06,
+                "rgb_detail": 3e-05
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [],
+            "flip_augmentation": false,
+            "rgb_detail": {
+                "enabled": true,
+                "channels": 16
+            }
+        },
+        {
+            "name": "robot160_clean_rgb_c32_lr1e5_1500",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 1e-05,
+                "points_head": 3e-06,
+                "neck": 1e-06,
+                "normal_head": 3e-06,
+                "mask_head": 3e-06,
+                "backbone": 1e-06,
+                "rgb_detail": 1e-05
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [],
+            "flip_augmentation": false,
+            "rgb_detail": {
+                "enabled": true,
+                "channels": 32
+            }
+        }
+    ],
+    "data_root": "/home/coder/dataset"
+}

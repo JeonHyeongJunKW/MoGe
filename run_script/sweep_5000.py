@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-COMPONENTS = ('scale_head', 'points_head', 'neck', 'normal_head', 'mask_head')
+COMPONENTS = ('scale_head', 'points_head', 'neck', 'normal_head', 'mask_head', 'rgb_detail')
 
 
 def write_json(path, data):
@@ -36,6 +36,10 @@ def resolve_experiment(base, experiment, warmup_steps, effective_batch, processe
     if warmup_steps < 1:
         raise ValueError('warmup_steps must be positive')
     config = copy.deepcopy(base)
+    if 'rgb_detail' in experiment:
+        config['model']['rgb_detail'] = copy.deepcopy(experiment['rgb_detail'])
+    if 'rgb_detail' in rates and not (config['model'].get('rgb_detail') or {}).get('enabled', False):
+        raise ValueError('rgb_detail learning rate requires model.rgb_detail.enabled=true')
     config.pop('validation', None)
     augmentations = copy.deepcopy(experiment.get('image_augmentation', []))
     config['data']['image_augmentation'] = augmentations
