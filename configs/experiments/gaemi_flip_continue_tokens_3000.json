@@ -1,0 +1,81 @@
+{
+    "base_config": "configs/train/gaemi_moge2_robot160.json",
+    "validation_config": "configs/validation/gaemi_moge2_robot160.json",
+    "num_iterations": 8000,
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "experiments": [
+        {
+            "name": "flip_mild_continue_t160_add8000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 160,
+            "rgb_detail": {
+                "enabled": false
+            }
+        },
+        {
+            "name": "flip_mild_continue_t400_add8000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 400,
+            "rgb_detail": {
+                "enabled": false
+            }
+        }
+    ],
+    "data_root": "/home/coder/dataset",
+    "initial_checkpoint": "/home/coder/MoGe/pretrained/best_flip.pt",
+    "baseline_per_experiment": true,
+    "initial_training_iterations": 2000,
+    "total_training_iterations": 10000
+}

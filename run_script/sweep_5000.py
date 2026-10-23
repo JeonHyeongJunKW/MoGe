@@ -36,6 +36,11 @@ def resolve_experiment(base, experiment, warmup_steps, effective_batch, processe
     if warmup_steps < 1:
         raise ValueError('warmup_steps must be positive')
     config = copy.deepcopy(base)
+    if 'num_tokens' in experiment:
+        tokens = experiment['num_tokens']
+        if type(tokens) is not int or tokens < 1:
+            raise ValueError('num_tokens must be a positive integer')
+        config['model']['num_tokens_range'] = [tokens, tokens]
     if 'rgb_detail' in experiment:
         config['model']['rgb_detail'] = copy.deepcopy(experiment['rgb_detail'])
     if 'rgb_detail' in rates and not (config['model'].get('rgb_detail') or {}).get('enabled', False):
@@ -138,7 +143,7 @@ def summarize(root, runs, dry_run, smoke):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, default=REPO / 'configs/experiments/gaemi_finetune_sweep_5000.json')
-    parser.add_argument('--pretrained', type=Path, default=Path('/home/coder/MoGe/pretrained/moge-2-vits.pt'))
+    parser.add_argument('--pretrained', type=Path, help='Override manifest initial_checkpoint or default pretrained model')
     parser.add_argument('--root', type=Path, help='New, empty sweep output directory')
     parser.add_argument('--experiment', action='append', help='Run only this experiment (repeatable)')
     parser.add_argument('--num-iterations', type=int)
@@ -151,6 +156,8 @@ def main():
     parser.add_argument('--skip-baseline', action='store_true')
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
+    if args.pretrained is None:
+        args.pretrained = Path(manifest.get('initial_checkpoint', '/home/coder/MoGe/pretrained/moge-2-vits.pt'))
     base = json.loads((REPO / manifest['base_config']).read_text())
     validation = json.loads((REPO / manifest['validation_config']).read_text())
     if args.validation_batch_size is not None:
@@ -212,14 +219,16 @@ def main():
 
     runs = []
     if not args.smoke and not args.skip_baseline:
-        _, config, batch, accumulation = resolved[0]
-        baseline_name = manifest.get('baseline_name', 'pretrained_baseline')
-        directory = root / baseline_name
-        directory.mkdir()
-        write_json(directory / 'train_config.json', config)
-        rates = resolved[0][0]['learning_rates']
-        code = execute(command(directory, rates, batch, accumulation, baseline=True, backbone_blocks=config['train_backbone_last_n_blocks']), directory, args.dry_run)
-        runs.append((directory.name, {}, batch, accumulation, code))
+        baselines = resolved if manifest.get('baseline_per_experiment', False) else resolved[:1]
+        for experiment, config, batch, accumulation in baselines:
+            baseline_name = (experiment['name'] + '_initial' if manifest.get('baseline_per_experiment', False)
+                             else manifest.get('baseline_name', 'pretrained_baseline'))
+            directory = root / baseline_name
+            directory.mkdir()
+            write_json(directory / 'train_config.json', config)
+            code = execute(command(directory, experiment['learning_rates'], batch, accumulation, baseline=True,
+                                   backbone_blocks=config['train_backbone_last_n_blocks']), directory, args.dry_run)
+            runs.append((directory.name, {}, batch, accumulation, code))
     for experiment, config, batch, accumulation in resolved:
         directory = root / experiment['name']
         directory.mkdir()
