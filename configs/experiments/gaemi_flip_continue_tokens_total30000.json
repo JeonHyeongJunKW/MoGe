@@ -1,0 +1,144 @@
+{
+    "base_config": "configs/train/gaemi_moge2_robot160.json",
+    "validation_config": "configs/validation/gaemi_moge2_robot160.json",
+    "num_iterations": 20000,
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "experiments": [
+        {
+            "name": "teacher_vitl_t1200_train2000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 1,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 1200,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "cosine_decay": {
+                "start_step": 500,
+                "end_step": 2000,
+                "min_factor": 0.2
+            },
+            "validation_batch_size": 1,
+            "checkpoint_model_source": "Ruicheng/moge-2-vitl-normal",
+            "baseline_evaluation": "teacher_moge2_vitl_normal_t1200",
+            "initial_training_iterations": 0,
+            "total_training_iterations": 2000,
+            "num_iterations": 2000
+        },
+        {
+            "name": "flip_mild_continue_t400_add20000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 400,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "initial_checkpoint": "/home/coder/MoGe/pretrained/best_flip_mild_t400_total10000.pt",
+            "cosine_decay": {
+                "start_step": 5000,
+                "end_step": 20000,
+                "min_factor": 0.2
+            }
+        },
+        {
+            "name": "flip_mild_continue_t160_add20000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 160,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "initial_checkpoint": "/home/coder/MoGe/pretrained/best_flip_mild_t160_total10000.pt",
+            "cosine_decay": {
+                "start_step": 5000,
+                "end_step": 20000,
+                "min_factor": 0.2
+            }
+        }
+    ],
+    "data_root": "/home/coder/dataset",
+    "baseline_per_experiment": true,
+    "initial_training_iterations": 10000,
+    "total_training_iterations": 30000,
+    "teacher_evaluations": [
+        {
+            "name": "teacher_moge2_vitl_normal_t1200",
+            "pretrained": "Ruicheng/moge-2-vitl-normal",
+            "num_tokens": 1200,
+            "batch_size": 1
+        }
+    ]
+}

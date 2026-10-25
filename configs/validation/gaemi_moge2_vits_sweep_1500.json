@@ -23,5 +23,5 @@
         }
     },
     "depth_bins": null,
-    "per_image_metrics": true
+    "per_image_metrics": false
 }

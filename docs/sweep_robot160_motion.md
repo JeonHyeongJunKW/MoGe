@@ -131,3 +131,97 @@ CUDA_VISIBLE_DEVICES=1 SWEEP_ROOT=workspace/continue_total10000_t400_run1 \
 기존 `_3000.sh` 실행 경로와 manifest도 추가 8,000회로 갱신했다. 기존에 실행 중인 프로세스나 이미 생성한 workspace config에는 이 변경이 적용되지 않는다. 같은 best_flip.pt(기존 2,000회)에서 새 workspace로 시작할 때 총 10,000회다. 다른 초기 모델이나 `--num-iterations` override를 사용하면 총 이력이 달라진다.
 
 현재 학습률 스케줄은 warmup 200 후 constant를 유지한다. 장기 학습용 cosine decay는 아직 적용하지 않았다. 현재 validation은 정상 영상 평가이며, 고정 합성 블러 평가와 실제 로봇 블러 평가는 아직 추가되지 않았다. 따라서 현재 best는 정상 validation REL 기준이며 블러 강건성 최적 모델임을 의미하지 않는다.
+
+### 누적 30,000회 continuation (400 → 160토큰)
+
+`run_script/run_gaemi_flip_continue_tokens_total30000.sh`는 각 토큰의 누적
+10,000회 best 모델에서 20,000회를 추가한다. 기존 best.pt는 모델 가중치만
+불러오므로 optimizer/scheduler/EMA는 새로 초기화된다. 입력 640×360,
+배치 8×4, 마지막 DINOv2 4개 블록, flip + mild motion blur 조건을 유지한다.
+
+원격 PC에 시작 모델을 각각 준비한다:
+- `/home/coder/MoGe/pretrained/best_flip_mild_t400_total10000.pt`
+- `/home/coder/MoGe/pretrained/best_flip_mild_t160_total10000.pt`
+
+```bash
+# 명령 및 설정만 생성
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh --dry-run
+# 두 모델의 초기 평가 후, 400토큰 학습 → 160토큰 학습
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh
+# 400토큰만 실행
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh \
+  --experiment flip_mild_continue_t400_add20000
+```
+
+추가 학습 기준 200회 warmup, 5,000회까지 기존 LR 유지,
+5,000~20,000회 cosine 감소로 최종 LR을 시작 LR의 20%로 만든다.
+시작 LR은 backbone/neck 5e-7, points/normal/mask 1.5e-6, scale 5e-6이다.
+`--num-iterations`만 바꾸면 cosine 종료 시점은 바뀌지 않는다.
+이미지별 validation 보고서는 비활성화한다. 전체 지표와 best 모델은 저장한다.
+`--pretrained`는 선택한 모든 실험의 시작 모델을 동일 경로로 덮어쓰므로,
+기본 실행에서는 생략한다. 초기 평가는 별도 `_initial` 폴더에 저장되므로
+후속 best가 초기 모델보다 좋은지는 summary에서 함께 비교해야 한다.
+
+### Large teacher 사전 평가
+
+누적 30,000회 sweep은 이제 `teacher_moge2_vitl_normal_t1200` 평가를 가장 먼저
+실행한다. 공개 `Ruicheng/moge-2-vitl-normal`의 `model.pt`를 Hugging Face에서
+자동 다운로드/캐시하며 체크포인트의 모델 구조를 그대로 사용한다.
+640×360 validation, 1,200토큰, batch 1, FP32, 학습 없음이다.
+Large와 Small의 비교에는 모델 크기뿐 아니라 토큰 수의 차이도 포함된다.
+
+```bash
+# Teacher 평가만 실행 (Small 체크포인트 불필요)
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh --teacher-only
+# Teacher → Small 초기 평가 → 400 추가 학습 → 160 추가 학습
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh
+# 이미 teacher 평가를 마쳤다면 생략
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh --skip-teacher
+```
+
+Teacher 결과는 sweep의 summary.csv/summary.md와
+`teacher_moge2_vitl_normal_t1200/validation/{best,step_00000000}.json`에 저장된다.
+`teacher_config.json`은 실제 모델 구조/평가 조건, `evaluation_memory.json`은
+추론 메모리 사용량을 기록한다. 학습 peak와 혼동하지 않도록 summary의
+training memory 칸에는 teacher 추론 메모리를 채우지 않는다.
+모델 가중치를 중복 저장하지 않으며 per-image JSON/CSV도 생성하지 않는다.
+Teacher 평가 실패 시 후속 학습을 시작하지 않는다. `--smoke`는 기존처럼
+학습 메모리 점검만 수행하므로 teacher 평가를 생략한다.
+오프라인 실행은 manifest의 teacher_evaluations[0].pretrained를 다운로드한
+Large 체크포인트의 절대 경로로 변경하면 된다. `--pretrained`는 Small 실험에만 적용된다.
+
+### Large teacher 학습 추가
+
+현재 전체 순서는 공개 Large 사전 평가 → Small 초기 평가 →
+Large 1,200토큰 2,000회 학습 → Small 400토큰 추가 20,000회 →
+Small 160토큰 추가 20,000회이다. Large는 공개 가중치에서 시작하므로
+이 데이터에서 2,000회, Small은 기존 학습을 합쳐 30,000회다.
+Large best 모델을 Small에 자동 증류하거나 학습 데이터로 전달하지는 않는다.
+
+Large 실험 이름은 `teacher_vitl_t1200_train2000`이다.
+DINOv2 마지막 4개 블록과 neck, scale/points/normal/mask head를 학습한다.
+시작 LR, flip + mild blur와 데이터는 Small continuation과 동일하다.
+Large는 200회 warmup, 500회까지 LR 유지, 500~2,000회 cosine 감소로
+최종 LR을 시작 LR의 20%로 낮춘다. Small의 20,000회 스케줄은 유지한다.
+Large 기본 forward batch는 1, accumulation은 32로 유효 배치 32를 유지한다.
+Large validation batch도 1이며, Small은 기존 train/validation batch 8을 유지한다.
+실제 VRAM은 아직 검증하지 않았으므로 다음 smoke로 확인할 수 있다:
+
+```bash
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh \
+  --experiment teacher_vitl_t1200_train2000 --smoke
+# 사전 평가와 Large 학습만 실행
+bash run_script/run_gaemi_flip_continue_tokens_total30000.sh \
+  --experiment teacher_vitl_t1200_train2000
+```
+
+`--teacher-only`는 여전히 공개 teacher의 평가만 수행한다.
+`--skip-teacher`는 사전 평가만 생략하며 Large 학습을 생략하지 않는다.
+Small만 학습하려면 `--experiment`로 Small 실험을 선택한다.
+`run_checkpoint_experiment.py`가 HF 캐시/체크포인트에서 실제 Large 모델
+구조를 읽어 train_config.json의 model을 교체한 뒤 학습 프로세스를 실행한다.
+따라서 dry-run의 model 필드는 임시 Small 템플릿이며 실제 Large 구조는
+실행 시 확정된다. 최종 명령은 resolved_command.json에 저장된다.
+`--pretrained`는 이 Large 실험의 checkpoint_model_source를 덮어쓰지 않는다.
+오프라인에서는 checkpoint_model_source와 teacher_evaluations의 pretrained를
+같은 로컬 Large 가중치 경로로 지정한다.

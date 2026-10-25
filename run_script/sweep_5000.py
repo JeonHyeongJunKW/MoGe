@@ -75,8 +75,17 @@ def resolve_experiment(base, experiment, warmup_steps, effective_batch, processe
                 if not any(spec.get('weight', 0) > 0 for spec in specs.values()):
                     raise ValueError(f'{head} requires a positive {loss} loss for {dataset["name"]}')
     config['optimizer']['params'] = groups
+    multiplier = f'min(1.0, (epoch + 1) / {warmup_steps})'
+    if 'cosine_decay' in experiment:
+        decay = experiment['cosine_decay']
+        start, end, minimum = decay['start_step'], decay['end_step'], decay['min_factor']
+        if (type(start) is not int or type(end) is not int or
+                not warmup_steps <= start < end or not 0 < minimum <= 1):
+            raise ValueError('Invalid cosine_decay: require warmup <= start < end and 0 < min_factor <= 1')
+        progress = f'min(1.0, max(0.0, (epoch + 1 - {start}) / {end - start}))'
+        multiplier += f' * ({minimum} + {1 - minimum} * (1 + cos(pi * {progress})) / 2)'
     config['lr_scheduler'] = {'type': 'LambdaLR', 'params': {
-        'lr_lambda': [f'min(1.0, (epoch + 1) / {warmup_steps})'] * len(groups)}}
+        'lr_lambda': [multiplier] * len(groups)}}
     config['sweep_experiment'] = copy.deepcopy(experiment)
     return config, batch, effective_batch // (batch * processes)
 
@@ -154,10 +163,12 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Write resolved configs/commands without starting training')
     parser.add_argument('--smoke', action='store_true', help='Ten training steps, no validation/checkpoints/PLY; same loss, precision and EMA')
     parser.add_argument('--skip-baseline', action='store_true')
+    parser.add_argument('--teacher-only', action='store_true', help='Only run teacher validation')
+    parser.add_argument('--skip-teacher', action='store_true', help='Skip teacher validation')
     args = parser.parse_args()
+    if args.teacher_only and (args.skip_teacher or args.smoke):
+        parser.error('--teacher-only cannot be combined with --skip-teacher or --smoke')
     manifest = json.loads(args.manifest.read_text())
-    if args.pretrained is None:
-        args.pretrained = Path(manifest.get('initial_checkpoint', '/home/coder/MoGe/pretrained/moge-2-vits.pt'))
     base = json.loads((REPO / manifest['base_config']).read_text())
     validation = json.loads((REPO / manifest['validation_config']).read_text())
     if args.validation_batch_size is not None:
@@ -184,8 +195,17 @@ def main():
         experiments = [e for e in experiments if e['name'] in args.experiment]
     resolved = [(e, *resolve_experiment(base, e, manifest['warmup_steps'], manifest['effective_batch_size'],
                                        args.num_processes, args.batch_size)) for e in experiments]
-    if not args.dry_run and not args.pretrained.is_file():
-        parser.error(f'Pretrained checkpoint not found: {args.pretrained}')
+    checkpoints = {
+        e['name']: Path(args.pretrained or e.get('initial_checkpoint') or
+                        manifest.get('initial_checkpoint', '/home/coder/MoGe/pretrained/moge-2-vits.pt'))
+        for e in experiments
+    }
+    for experiment in ([] if args.teacher_only else experiments):
+        if experiment.get('checkpoint_model_source'):
+            continue  # Resolved with its architecture by run_checkpoint_experiment.py.
+        checkpoint = checkpoints[experiment['name']]
+        if not args.dry_run and not checkpoint.is_file():
+            parser.error(f'Pretrained checkpoint not found: {checkpoint}')
     mode = 'smoke' if args.smoke else 'dry_run' if args.dry_run else 'train'
     root = (args.root or REPO / 'workspace/gaemi_finetune_sweep_5000' /
             (datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_' + mode)).resolve()
@@ -196,10 +216,10 @@ def main():
     write_json(root / 'validation_config.json', validation)
     write_json(root / 'invocation.json', {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()})
 
-    def command(directory, rates, batch, accumulation, baseline=False, backbone_blocks=0):
+    def command(directory, rates, batch, accumulation, checkpoint, baseline=False, backbone_blocks=0):
         cmd = [sys.executable, '-u', '-m', 'accelerate.commands.launch', '--num_processes', str(args.num_processes),
                '--module', 'moge.train.train_moge12', '--config', str(directory / 'train_config.json'),
-               '--initial_checkpoint', str(args.pretrained.resolve()), '--checkpoint', 'none',
+               '--initial_checkpoint', str(checkpoint.resolve()), '--checkpoint', 'none',
                '--name', directory.name, '--workspace', str(directory),
                '--num_iterations', str(0 if baseline else iterations),
                '--batch_size_forward', str(batch), '--gradient_accumulation_steps', str(accumulation),
@@ -217,23 +237,70 @@ def main():
             cmd += ['--validate_before_training', 'True']
         return cmd
 
+    def experiment_command(experiment, config, directory, batch, accumulation, baseline=False):
+        cmd = command(directory, experiment['learning_rates'], batch, accumulation,
+                      checkpoints[experiment['name']], baseline=baseline,
+                      backbone_blocks=config['train_backbone_last_n_blocks'])
+        run_iterations = args.num_iterations if args.num_iterations is not None else experiment.get('num_iterations', manifest['num_iterations'])
+        if type(run_iterations) is not int or run_iterations < 1:
+            raise ValueError('Experiment num_iterations must be a positive integer')
+        if args.smoke:
+            run_iterations = min(run_iterations, 10)
+        cmd[cmd.index('--num_iterations') + 1] = str(0 if baseline else run_iterations)
+        if not args.smoke and 'validation_batch_size' in experiment:
+            local_validation = copy.deepcopy(validation)
+            local_validation['batch_size'] = experiment['validation_batch_size']
+            write_json(directory / 'validation_config.json', local_validation)
+            cmd[cmd.index('--val_config') + 1] = str(directory / 'validation_config.json')
+        if experiment.get('checkpoint_model_source'):
+            cmd[cmd.index('--initial_checkpoint') + 1] = experiment['checkpoint_model_source']
+            cmd = [sys.executable, '-u', str(REPO / 'run_script/run_checkpoint_experiment.py'),
+                   '--checkpoint-source', experiment['checkpoint_model_source'], '--', *cmd]
+        return cmd
+
     runs = []
+    teachers = manifest.get('teacher_evaluations', [])
+    if args.teacher_only and not teachers:
+        parser.error('Manifest has no teacher_evaluations')
+    if not args.smoke and not args.skip_teacher:
+        for teacher in teachers:
+            directory = root / teacher['name']
+            directory.mkdir()
+            write_json(directory / 'train_config.json', {'train_backbone_last_n_blocks': 0,
+                                                        'evaluation_only': True, **teacher})
+            cmd = [sys.executable, '-u', str(REPO / 'run_script/evaluate_teacher.py'),
+                   '--pretrained', teacher['pretrained'],
+                   '--num-tokens', str(teacher['num_tokens']),
+                   '--batch-size', str(teacher.get('batch_size', 1)),
+                   '--validation-config', str(root / 'validation_config.json'),
+                   '--workspace', str(directory)]
+            code = execute(cmd, directory, args.dry_run)
+            runs.append((directory.name, {}, teacher.get('batch_size', 1), 1, code))
+            summarize(root, runs, args.dry_run, False)
+            if code:
+                print(f'Teacher evaluation failed; training not started. Results: {root}')
+                return code
+    if args.teacher_only:
+        print(f'Results: {root}')
+        return 0
     if not args.smoke and not args.skip_baseline:
         baselines = resolved if manifest.get('baseline_per_experiment', False) else resolved[:1]
         for experiment, config, batch, accumulation in baselines:
+            if any(name == experiment.get('baseline_evaluation') and code == 0
+                   for name, _, _, _, code in runs):
+                continue
             baseline_name = (experiment['name'] + '_initial' if manifest.get('baseline_per_experiment', False)
                              else manifest.get('baseline_name', 'pretrained_baseline'))
             directory = root / baseline_name
             directory.mkdir()
             write_json(directory / 'train_config.json', config)
-            code = execute(command(directory, experiment['learning_rates'], batch, accumulation, baseline=True,
-                                   backbone_blocks=config['train_backbone_last_n_blocks']), directory, args.dry_run)
+            code = execute(experiment_command(experiment, config, directory, batch, accumulation, baseline=True), directory, args.dry_run)
             runs.append((directory.name, {}, batch, accumulation, code))
     for experiment, config, batch, accumulation in resolved:
         directory = root / experiment['name']
         directory.mkdir()
         write_json(directory / 'train_config.json', config)
-        code = execute(command(directory, experiment['learning_rates'], batch, accumulation, backbone_blocks=config['train_backbone_last_n_blocks']), directory, args.dry_run)
+        code = execute(experiment_command(experiment, config, directory, batch, accumulation), directory, args.dry_run)
         runs.append((directory.name, experiment['learning_rates'], batch, accumulation, code))
         summarize(root, runs, args.dry_run, args.smoke)
     print(f'Results: {root}')

@@ -11,6 +11,55 @@ from run_script.sweep_5000 import REPO, resolve_experiment
 
 
 class SweepTests(unittest.TestCase):
+    def test_teacher_dry_run_precedes_training(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run([
+                sys.executable, str(REPO / 'run_script/sweep_5000.py'),
+                '--manifest', str(REPO / 'configs/experiments/gaemi_flip_continue_tokens_total30000.json'),
+                '--root', temporary, '--dry-run',
+            ], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            root = Path(temporary)
+            teacher = json.loads((root / 'teacher_moge2_vitl_normal_t1200/command.json').read_text())
+            self.assertIn(str(REPO / 'run_script/evaluate_teacher.py'), teacher)
+            self.assertNotIn('--num_iterations', teacher)
+            self.assertEqual(teacher[teacher.index('--num-tokens') + 1], '1200')
+            self.assertEqual(teacher[teacher.index('--batch-size') + 1], '1')
+            self.assertLess(result.stdout.index('evaluate_teacher.py'), result.stdout.index('accelerate.commands.launch'))
+            large = root / 'teacher_vitl_t1200_train2000'
+            large_command = json.loads((large / 'command.json').read_text())
+            self.assertIn(str(REPO / 'run_script/run_checkpoint_experiment.py'), large_command)
+            self.assertEqual(large_command[large_command.index('--num_iterations') + 1], '2000')
+            self.assertEqual(large_command[large_command.index('--gradient_accumulation_steps') + 1], '32')
+            self.assertEqual(json.loads((large / 'validation_config.json').read_text())['batch_size'], 1)
+            self.assertFalse((root / 'teacher_vitl_t1200_train2000_initial').exists())
+            for tokens in (400, 160):
+                command = json.loads((root / f'flip_mild_continue_t{tokens}_add20000/command.json').read_text())
+                self.assertEqual(command[command.index('--num_iterations') + 1], '20000')
+                self.assertIn(f'best_flip_mild_t{tokens}_total10000.pt', command[command.index('--initial_checkpoint') + 1])
+
+    def test_large_training_architecture_and_batch(self):
+        from run_script.run_checkpoint_experiment import configure_model
+        manifest = json.loads((REPO / 'configs/experiments/gaemi_flip_continue_tokens_total30000.json').read_text())
+        base = json.loads((REPO / manifest['base_config']).read_text())
+        experiment = manifest['experiments'][0]
+        self.assertEqual(experiment['name'], 'teacher_vitl_t1200_train2000')
+        config, batch, accumulation = resolve_experiment(base, experiment, 200, 32, 1)
+        self.assertEqual((batch, accumulation), (1, 32))
+        checkpoint_config = copy.deepcopy(base['model'])
+        checkpoint_config['encoder'].update(backbone='dinov2_vitl14', intermediate_layers=[11, 23], dim_out=1024)
+        checkpoint_config['scale_head']['dims'] = [1024, 1024, 1024, 1]
+        result = configure_model(config, checkpoint_config)
+        self.assertEqual(result['model']['encoder'], checkpoint_config['encoder'])
+        self.assertEqual(result['model']['scale_head'], checkpoint_config['scale_head'])
+        self.assertEqual(result['model']['num_tokens_range'], [1200, 1200])
+        self.assertEqual(result['optimizer'], config['optimizer'])
+        self.assertEqual(result['data'], config['data'])
+        self.assertNotEqual(config['model']['encoder']['backbone'], 'dinov2_vitl14')
+        del checkpoint_config['normal_head']
+        with self.assertRaises(ValueError):
+            configure_model(config, checkpoint_config)
+
     def test_rgb_detail_manifest_optimizer_group(self):
         manifest = json.loads((REPO / 'configs/experiments/gaemi_robot160_rgb_detail.json').read_text())
         base = json.loads((REPO / manifest['base_config']).read_text())
