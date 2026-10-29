@@ -1,0 +1,168 @@
+{
+    "base_config": "configs/train/gaemi_moge2_robot160.json",
+    "validation_config": "configs/validation/gaemi_moge2_robot160.json",
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "data_root": "/home/coder/dataset",
+    "num_iterations": 3000,
+    "initial_training_iterations": 18500,
+    "total_training_iterations": 21500,
+    "initial_checkpoint": "/home/coder/MoGe/pretrained/best_flip_mild_t400_total18500.pt",
+    "baseline_per_experiment": false,
+    "baseline_name": "best_t400_total18500_initial",
+    "experiments": [
+        {
+            "name": "t400_last4_lr5e-7_add3000",
+            "train_backbone_last_n_blocks": 4,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 400,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "cosine_decay": {
+                "start_step": 1000,
+                "end_step": 3000,
+                "min_factor": 0.2
+            }
+        },
+        {
+            "name": "t400_last8_lr5e-7_add3000",
+            "train_backbone_last_n_blocks": 8,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 400,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "cosine_decay": {
+                "start_step": 1000,
+                "end_step": 3000,
+                "min_factor": 0.2
+            }
+        },
+        {
+            "name": "t400_last12_lr5e-7_add3000",
+            "train_backbone_last_n_blocks": 12,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 5e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 400,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "cosine_decay": {
+                "start_step": 1000,
+                "end_step": 3000,
+                "min_factor": 0.2
+            }
+        },
+        {
+            "name": "t400_last12_lr1e-7_add3000",
+            "train_backbone_last_n_blocks": 12,
+            "learning_rates": {
+                "scale_head": 5e-06,
+                "points_head": 1.5e-06,
+                "neck": 5e-07,
+                "normal_head": 1.5e-06,
+                "mask_head": 1.5e-06,
+                "backbone": 1e-07
+            },
+            "batch_size_forward": 8,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 400,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "cosine_decay": {
+                "start_step": 1000,
+                "end_step": 3000,
+                "min_factor": 0.2
+            }
+        }
+    ]
+}

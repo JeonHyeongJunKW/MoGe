@@ -225,3 +225,34 @@ Small만 학습하려면 `--experiment`로 Small 실험을 선택한다.
 `--pretrained`는 이 Large 실험의 checkpoint_model_source를 덮어쓰지 않는다.
 오프라인에서는 checkpoint_model_source와 teacher_evaluations의 pretrained를
 같은 로컬 Large 가중치 경로로 지정한다.
+
+### Small 400토큰 backbone 범위 비교 (2026-10-29)
+
+`run_script/run_gaemi_t400_backbone_sweep_3000.sh`는
+`/home/coder/MoGe/pretrained/best_flip_mild_t400_total18500.pt`에서 시작한다.
+이 파일은 추가 학습 step 8499, validation REL 0.2626725414의 Small best이며,
+이전 학습 포함 18,500회를 거친 모델이다. 각 실험은 독립적으로 3,000회
+추가 학습해 누적 21,500회에 해당한다. optimizer/scheduler/EMA는 초기화한다.
+
+| 실험 | 마지막 학습 블록 수 | backbone LR |
+| --- | --- | --- |
+| t400_last4_lr5e-7_add3000 | 4 | 5e-7 |
+| t400_last8_lr5e-7_add3000 | 8 | 5e-7 |
+| t400_last12_lr5e-7_add3000 | 12 | 5e-7 |
+| t400_last12_lr1e-7_add3000 | 12 | 1e-7 |
+
+모두 400토큰, 640×360, forward 8 × accumulation 4, 기존 데이터와
+flip + mild blur를 유지한다. scale LR 5e-6, points/normal/mask 1.5e-6,
+neck 5e-7이며, 200회 warmup → 1,000회까지 유지 → 3,000회까지 cosine으로
+시작 LR의 20%까지 낮춘다. 최초 공통 모델을 한 번 평가한 뒤 네 실험을
+표 순서대로 실행한다. Large 평가/학습은 이 sweep에 포함하지 않는다.
+12블록을 열어도 patch embedding, 최종 norm, encoder output projection은
+기존 코드대로 동결된다. 블록 수 증가에 따른 VRAM은 실제 smoke로 확인한다.
+전체 validation은 250회마다 수행하며 이미지별 JSON/CSV는 저장하지 않는다.
+고정 블러 별도 평가는 이 sweep에 자동 포함되어 있지 않다.
+
+```bash
+bash run_script/run_gaemi_t400_backbone_sweep_3000.sh --dry-run
+bash run_script/run_gaemi_t400_backbone_sweep_3000.sh --smoke
+bash run_script/run_gaemi_t400_backbone_sweep_3000.sh
+```
