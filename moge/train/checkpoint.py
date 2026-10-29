@@ -29,12 +29,6 @@ def load_checkpoint(
         if not ckpt_path or ckpt_path == 'none':
             # - No checkpoint requested
             pass
-        elif ckpt_path.endswith('.pt'):
-            # - Load specific checkpoint file
-            if not Path(ckpt_path).exists():
-                raise FileNotFoundError(f'Requested checkpoint file does not exist: {ckpt_path}')
-            print(f'Load checkpoint: {ckpt_path}')
-            checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=True)
         elif ckpt_path == 'latest':
             # - Load latest
             latest_path = Path(workspace, 'checkpoint', 'latest.pt')
@@ -56,9 +50,18 @@ def load_checkpoint(
                 # to `--initial_checkpoint`, as that option's help text promises. Hydrating here
                 # would instead hand back `{'step': N}` and hard-fail in restore_training_state.
                 print(f"Warning: no checkpoint named '{ckpt_name}.pt' under {Path(workspace, 'checkpoint')}")
+        elif Path(ckpt_path).is_file() or ckpt_path.endswith('.pt'):
+            # Explicit checkpoint paths do not need a filename extension. This
+            # matters for Hugging Face cache blobs: resolving the model.pt
+            # symlink produces a content-addressed filename with no suffix.
+            path = Path(ckpt_path)
+            if not path.is_file():
+                raise FileNotFoundError(f'Requested checkpoint file does not exist: {ckpt_path}')
+            print(f'Load checkpoint: {ckpt_path}')
+            checkpoint = torch.load(path, map_location='cpu', weights_only=True)
         else:
             raise ValueError(
-                f'Unrecognized checkpoint specifier {ckpt_path!r}; expected a path ending in .pt, '
+                f'Unrecognized checkpoint specifier {ckpt_path!r}; expected an existing checkpoint file, '
                 "'latest', 'final', 'none', or a step number"
             )
     return checkpoint
