@@ -60,6 +60,34 @@ class SweepTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             configure_model(config, checkpoint_config)
 
+    def test_large_continuation_sweep(self):
+        manifest_path = REPO / 'configs/experiments/gaemi_vitl_backbone_sweep_3000.json'
+        manifest = json.loads(manifest_path.read_text())
+        self.assertEqual([e['train_backbone_last_n_blocks'] for e in manifest['experiments']], [4, 8, 12])
+        for smoke in (False, True):
+            with tempfile.TemporaryDirectory() as temporary:
+                result = subprocess.run([
+                    sys.executable, str(REPO / 'run_script/sweep_5000.py'),
+                    '--manifest', str(manifest_path), '--root', temporary, '--dry-run',
+                    *(['--smoke'] if smoke else []),
+                ], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                root = Path(temporary)
+                self.assertEqual(len(list(root.glob('*/command.json'))), 3 if smoke else 4)
+                for experiment in manifest['experiments']:
+                    directory = root / experiment['name']
+                    command = json.loads((directory / 'command.json').read_text())
+                    self.assertEqual(command[command.index('--checkpoint-source') + 1], manifest['initial_checkpoint'])
+                    self.assertEqual(command[command.index('--num_iterations') + 1], '10' if smoke else '3000')
+                    self.assertEqual(command[command.index('--batch_size_forward') + 1], '1')
+                    self.assertEqual(command[command.index('--gradient_accumulation_steps') + 1], '32')
+                    config = json.loads((directory / 'train_config.json').read_text())
+                    self.assertEqual(config['model']['num_tokens_range'], [1200, 1200])
+                    if not smoke:
+                        validation = json.loads((directory / 'validation_config.json').read_text())
+                        self.assertEqual(validation['batch_size'], 1)
+                        self.assertFalse(validation['per_image_metrics'])
+
     def test_rgb_detail_manifest_optimizer_group(self):
         manifest = json.loads((REPO / 'configs/experiments/gaemi_robot160_rgb_detail.json').read_text())
         base = json.loads((REPO / manifest['base_config']).read_text())
