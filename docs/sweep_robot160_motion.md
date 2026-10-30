@@ -264,11 +264,11 @@ bash run_script/run_gaemi_t400_backbone_sweep_3000.sh
 이 파일은 이전 `teacher_vitl_t1200_train2000/checkpoint/best.pt`
 (step 1999, REL 0.2659013049551976)에 해당한다. 공개 초기 모델이나 Small best가 아니다.
 
-공통 초기 평가 1회 뒤 마지막 4, 8, 12개 블록 실험을 순차 실행한다.
+초기 평가는 생략하고 마지막 4, 8, 12개 블록 실험을 바로 순차 실행한다.
 각 실험은 동일한 Large 가중치에서 독립적으로 추가 3,000회(누적 5,000회)
 학습한다. Large는 24블록이므로 마지막 12개는 절반이며 전체 backbone 학습은 아니다.
-1,200토큰, 입력 640×360, forward batch 1 × accumulation 32,
-validation batch 1, flip + mild blur, 기존 train/validation 데이터를 유지한다.
+1,200토큰, 입력 640×360, forward batch 4 × accumulation 8,
+validation batch 4, flip + mild blur, 기존 train/validation 데이터를 유지한다.
 LR: backbone/neck 5e-7, scale 5e-6, points/normal/mask 1.5e-6.
 200회 warmup → 1,000회까지 유지 → 3,000회까지 cosine으로 20%까지 감소한다.
 optimizer/scheduler/EMA는 새로 시작한다. 이미지별 validation 보고서는 저장하지 않는다.
@@ -285,5 +285,5 @@ bash run_script/run_gaemi_vitl_backbone_sweep_3000.sh \
 Large 학습 구조는 실행 시 체크포인트에서 읽어 구성한다. dry-run의 model은
 임시 Small 템플릿이다. 시작 파일 경로 변경 시 manifest의 initial_checkpoint와
 각 실험의 checkpoint_model_source를 함께 변경한다(`--pretrained`만으로는
-checkpoint_model_source를 덮어쓰지 않는다). 실제 VRAM은 smoke로 확인한다.
+checkpoint_model_source를 덮어쓰지 않는다). smoke는 validation을 생략하므로 평가 배치 4의 VRAM은 본 실행의 첫 정기 validation에서 확인한다.
 별도 블러 평가나 Small 증류는 포함하지 않는다.

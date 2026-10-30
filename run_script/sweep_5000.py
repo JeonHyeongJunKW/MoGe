@@ -283,7 +283,7 @@ def main():
     if args.teacher_only:
         print(f'Results: {root}')
         return 0
-    if not args.smoke and not args.skip_baseline:
+    if not args.smoke and not args.skip_baseline and not manifest.get('skip_baseline', False):
         baselines = resolved if manifest.get('baseline_per_experiment', False) else resolved[:1]
         for experiment, config, batch, accumulation in baselines:
             if any(name == experiment.get('baseline_evaluation') and code == 0

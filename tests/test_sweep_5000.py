@@ -73,19 +73,20 @@ class SweepTests(unittest.TestCase):
                 ], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 root = Path(temporary)
-                self.assertEqual(len(list(root.glob('*/command.json'))), 3 if smoke else 4)
+                self.assertEqual(len(list(root.glob('*/command.json'))), 3)
                 for experiment in manifest['experiments']:
                     directory = root / experiment['name']
                     command = json.loads((directory / 'command.json').read_text())
                     self.assertEqual(command[command.index('--checkpoint-source') + 1], manifest['initial_checkpoint'])
                     self.assertEqual(command[command.index('--num_iterations') + 1], '10' if smoke else '3000')
-                    self.assertEqual(command[command.index('--batch_size_forward') + 1], '1')
-                    self.assertEqual(command[command.index('--gradient_accumulation_steps') + 1], '32')
+                    self.assertEqual(command[command.index('--batch_size_forward') + 1], '4')
+                    self.assertEqual(command[command.index('--gradient_accumulation_steps') + 1], '8')
+                    self.assertNotIn('--validate_before_training', command)
                     config = json.loads((directory / 'train_config.json').read_text())
                     self.assertEqual(config['model']['num_tokens_range'], [1200, 1200])
                     if not smoke:
                         validation = json.loads((directory / 'validation_config.json').read_text())
-                        self.assertEqual(validation['batch_size'], 1)
+                        self.assertEqual(validation['batch_size'], 4)
                         self.assertFalse(validation['per_image_metrics'])
 
     def test_rgb_detail_manifest_optimizer_group(self):
