@@ -287,3 +287,28 @@ Large 학습 구조는 실행 시 체크포인트에서 읽어 구성한다. dry
 각 실험의 checkpoint_model_source를 함께 변경한다(`--pretrained`만으로는
 checkpoint_model_source를 덮어쓰지 않는다). smoke는 validation을 생략하므로 평가 배치 4의 VRAM은 본 실행의 첫 정기 validation에서 확인한다.
 별도 블러 평가나 Small 증류는 포함하지 않는다.
+
+### Large 12블록 best에서 누적 10,000회까지 추가 학습 (2026-11-03)
+
+시작 파일 이름: `best_teacher_vitl_t1200_last12_total5000.pt`.
+이전 `vitl_t1200_last12_lr5e-7_add3000/checkpoint/best.pt`를 원격 PC의
+`/home/coder/MoGe/pretrained/`에 위 이름으로 복사한다.
+해당 모델은 추가 step 2999, 누적 5,000회, REL 0.2183992478의 Large best다.
+
+`run_script/run_gaemi_vitl_continue_total10000.sh`는 이 모델에서 5,000회를
+추가 학습한다. 단일 실험이며 누적 학습은 10,000회에 해당한다.
+마지막 12블록, 1,200토큰, 입력 640×360, forward 4 × accumulation 8,
+validation batch 4, 데이터 및 flip + mild blur를 유지한다.
+이전 스케줄 종료 수준인 backbone/neck 1e-7, scale 1e-6,
+points/normal/mask 3e-7을 사용한다. 200회 warmup 이후 낮은 LR을 일정하게
+유지하며 추가 cosine 감소는 적용하지 않는다.
+모델 가중치만 이어받고 optimizer/scheduler/EMA는 초기화한다.
+초기 validation은 생략하고 정기 validation은 250회마다 유지한다.
+기존 best는 별도 보관하고 새 best를 REL 0.2183992478과 비교한다.
+블러/근거리 별도 평가는 이 실행에 자동 포함하지 않는다.
+
+```bash
+bash run_script/run_gaemi_vitl_continue_total10000.sh --dry-run
+bash run_script/run_gaemi_vitl_continue_total10000.sh --smoke
+bash run_script/run_gaemi_vitl_continue_total10000.sh
+```

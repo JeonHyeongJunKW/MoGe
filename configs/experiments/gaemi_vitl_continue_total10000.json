@@ -1,0 +1,52 @@
+{
+    "base_config": "configs/train/gaemi_moge2_robot160.json",
+    "validation_config": "configs/validation/gaemi_moge2_robot160.json",
+    "effective_batch_size": 32,
+    "warmup_steps": 200,
+    "seed": 0,
+    "data_root": "/home/coder/dataset",
+    "num_iterations": 5000,
+    "initial_training_iterations": 5000,
+    "total_training_iterations": 10000,
+    "initial_checkpoint": "/home/coder/MoGe/pretrained/best_teacher_vitl_t1200_last12_total5000.pt",
+    "baseline_per_experiment": false,
+    "baseline_name": "teacher_vitl_t1200_last12_total5000_initial",
+    "experiments": [
+        {
+            "name": "vitl_t1200_last12_lr1e-7_add5000",
+            "train_backbone_last_n_blocks": 12,
+            "learning_rates": {
+                "scale_head": 1e-06,
+                "points_head": 3e-07,
+                "neck": 1e-07,
+                "normal_head": 3e-07,
+                "mask_head": 3e-07,
+                "backbone": 1e-07
+            },
+            "batch_size_forward": 4,
+            "image_augmentation": [
+                {
+                    "type": "motion_blur",
+                    "probability": 0.3,
+                    "kernel_sizes": [
+                        3,
+                        5,
+                        7
+                    ],
+                    "angle_range": [
+                        -180,
+                        180
+                    ]
+                }
+            ],
+            "flip_augmentation": true,
+            "num_tokens": 1200,
+            "rgb_detail": {
+                "enabled": false
+            },
+            "validation_batch_size": 4,
+            "checkpoint_model_source": "/home/coder/MoGe/pretrained/best_teacher_vitl_t1200_last12_total5000.pt"
+        }
+    ],
+    "skip_baseline": true
+}
