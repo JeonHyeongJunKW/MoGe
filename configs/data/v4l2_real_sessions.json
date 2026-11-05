@@ -1,0 +1,19 @@
+{
+    "description": "Real robot RGB; split entire recording/scene groups, never individual cameras or frames.",
+    "cameras": ["left", "front_left", "right"],
+    "min_interval_seconds": 0.5,
+    "rectification": {
+        "width": 640,
+        "height": 360,
+        "K": [[359.34788434, 0, 319.5], [0, 360.93191242, 179.5], [0, 0, 1]],
+        "profile": "G41/G45 fixed robot rectification; same as reviewed front_left inference"
+    },
+    "sessions": [
+        {
+            "id": "2026_11_03_19_35_51",
+            "path": "2026_11_03_19_35_51",
+            "scene_group": "2026_11_03_19_35_51",
+            "split": "train"
+        }
+    ]
+}

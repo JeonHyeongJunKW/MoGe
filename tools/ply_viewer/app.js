@@ -6,6 +6,7 @@ if(urlOptions.get('embed')==='1')document.body.classList.add('embedded');
 const status = (text, error = false) => { $('status').textContent = text; $('status').classList.toggle('error', error); };
 const camera = {target: [0, 0, 0], distance: 5, orientation: [0, 0, 0, 1], radius: 1};
 let clouds = [], samples = [], requestID = 0;
+let cameraInitialized = false;
 let localFiles = [null, null];
 const tint = [[0, 200 / 255, 1], [1, 120 / 255, 0]];
 const vertex = `attribute vec3 position; attribute vec3 color;
@@ -128,7 +129,12 @@ function install(data) {
   clouds=data; renderers.forEach(r=>r.upload());
   $('gtCount').textContent=`${data[0].count.toLocaleString()} points`;
   $('predCount').textContent=`${data[1].count.toLocaleString()} points`;
-  camera.orientation=[0,0,0,1];fit();
+  // Frame changes preserve the shared camera, including zoom and pan.
+  if (!cameraInitialized && data.some(cloud=>cloud.count>0)) {
+    camera.orientation=[0,0,0,1];fit();cameraInitialized=true;
+  } else {
+    draw();
+  }
 }
 function summary(data){return data.map((c,i)=>`${i?'Pred':'GT'} ${c.count.toLocaleString()} / ${c.originalCount.toLocaleString()}점${c.step>1?' (표시용 다운샘플링)':''}${c.omitted?` · 비유한 좌표 ${c.omitted}점 제외`:''}`).join(' · ');}
 function clearData() {
@@ -137,19 +143,37 @@ function clearData() {
 }
 const asset=(sample,name)=>`/api/asset?${new URLSearchParams({sample,name})}`;
 async function checked(url){const r=await fetch(url);if(!r.ok)throw Error(`파일을 읽을 수 없습니다 (${r.status}). 결과 파일을 확인하세요.`);return r;}
+let playing=false, playTimer=null, playGeneration=0;
+function stopPlayback(){playing=false;playGeneration++;clearTimeout(playTimer);$('play').textContent='▶ 재생';$('play').setAttribute('aria-pressed','false');}
+async function playNext(generation){
+  if(!playing||generation!==playGeneration)return;
+  const select=$('sample');
+  if(select.selectedIndex>=select.options.length-1){stopPlayback();return;}
+  select.selectedIndex=Math.max(1,select.selectedIndex+1);
+  const started=performance.now();
+  const ok=await loadSample();
+  if(!ok){if(generation===playGeneration)stopPlayback();return;}
+  if(playing&&generation===playGeneration)playTimer=setTimeout(()=>playNext(generation),Math.max(0,Number($('interval').value)-(performance.now()-started)));
+}
 async function loadSample() {
-  const sample=$('sample').value;if(!sample)return;
+  const sample=$('sample').value;if(!sample)return false;
   localFiles=[null,null];updateDropNames();
-  const id=++requestID;clearData();status('PLY 불러오는 중…');
+  const id=++requestID;status('PLY 불러오는 중…');
   try{
-    const data=await Promise.all(['gt.ply','pred.ply'].map(async name=>parsePLY(await (await checked(asset(sample,name))).arrayBuffer())));
-    if(id!==requestID)return;install(data);status(`${sample} · ${summary(data)}`);
-    $('rgb').src=asset(sample,'image.png');$('rgb').hidden=false;
-    const info=await fetch(asset(sample,'info.json'));
-    const metadata=info.ok?JSON.stringify(await info.json(),null,2):'info.json 없음 · 원본 좌표와 스케일로 표시합니다.';
-    if(id!==requestID)return;
-    $('info').textContent=metadata;
-  }catch(e){if(id===requestID)status(e.message,true);}
+    const preview=new Image();preview.src=asset(sample,'image.png');
+    const previewReady=preview.decode().then(()=>true,()=>false);
+    const [data,metadata,imageReady]=await Promise.all([
+      Promise.all(['gt.ply','pred.ply'].map(async name=>parsePLY(await (await checked(asset(sample,name))).arrayBuffer()))),
+      fetch(asset(sample,'info.json')).then(async r=>r.ok?JSON.stringify(await r.json(),null,2):'info.json 없음'),
+      previewReady
+    ]);
+    if(id!==requestID)return false;
+    // Keep current geometry/RGB until the complete next frame is ready.
+    install(data);
+    if(imageReady){$('rgb').src=preview.src;$('rgb').hidden=false;}
+    $('info').textContent=metadata;status(`${sample} · ${summary(data)}`);
+    return true;
+  }catch(e){if(id===requestID)status(e.message,true);return false;}
 }
 function filterSamples() {
   const previous=$('sample').value, q=$('search').value.toLowerCase();
@@ -162,6 +186,7 @@ function updateDropNames(){
   ['gtDropName','predDropName'].forEach((id,i)=>$(id).textContent=localFiles[i]?.name??(i?'pred.ply':'gt.ply'));
 }
 async function loadLocalFiles(){
+  stopPlayback();
   const files=[...localFiles],id=++requestID;updateDropNames();clearData();status('로컬 PLY 읽는 중…');
   const empty=()=>({data:new Float32Array(),count:0,originalCount:0,omitted:0,step:1});
   try{
@@ -197,8 +222,9 @@ try{
       draw();
     },{passive:false});
   }
-  $('refresh').onclick=refresh;$('load').onclick=loadSample;$('sample').onchange=loadSample;$('search').oninput=filterSamples;
-  for(const [id,delta] of [['prev',-1],['next',1]])$(id).onclick=()=>{const s=$('sample');s.selectedIndex=Math.max(1,Math.min(s.options.length-1,s.selectedIndex+delta));loadSample();};
+  $('play').onclick=()=>{if(playing){stopPlayback();return;}if($('sample').options.length<=1)return;playing=true;const generation=++playGeneration;$('play').textContent='⏸ 일시정지';$('play').setAttribute('aria-pressed','true');if($('sample').selectedIndex>=$('sample').options.length-1)$('sample').selectedIndex=0;playNext(generation);};
+  $('refresh').onclick=()=>{stopPlayback();refresh();};$('load').onclick=()=>{stopPlayback();loadSample();};$('sample').onchange=()=>{stopPlayback();loadSample();};$('search').oninput=()=>{stopPlayback();filterSamples();};
+  for(const [id,delta] of [['prev',-1],['next',1]])$(id).onclick=()=>{stopPlayback();const s=$('sample');s.selectedIndex=Math.max(1,Math.min(s.options.length-1,s.selectedIndex+delta));loadSample();};
   for(const id of ['mode','color','size','depth','showGT','showPred'])$(id).oninput=draw;
   $('showAxes').onchange=()=>clouds.length?fit():draw();$('axisLength').onchange=()=>clouds.length?fit():draw();
   $('fit').onclick=fit;$('front').onclick=()=>{camera.orientation=[0,0,0,1];draw();};

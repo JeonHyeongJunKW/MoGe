@@ -25,6 +25,9 @@ def _selected_backbone_blocks(model, count):
 
 def configure_moge2_heads(model, trainable_heads, train_backbone_last_n_blocks=0):
     selected_blocks = _selected_backbone_blocks(model, train_backbone_last_n_blocks)
+    lora = getattr(model, 'lora_config', None)
+    if lora is not None and train_backbone_last_n_blocks != lora['last_n_blocks']:
+        raise ValueError('Trainable block selection must match LoRA last_n_blocks')
     allowed = {'neck', 'scale_head', 'points_head', 'normal_head', 'mask_head', 'rgb_detail'}
     if set(trainable_heads) - allowed:
         raise ValueError(f'Unsupported trainable components: {set(trainable_heads) - allowed}')
@@ -41,8 +44,12 @@ def configure_moge2_heads(model, trainable_heads, train_backbone_last_n_blocks=0
         print(f'{name}: {"trainable" if enabled else "frozen"}')
 
     for index, block in selected_blocks:
-        block.requires_grad_(True)
-        print(f'backbone block {index}: trainable')
+        if lora is None:
+            block.requires_grad_(True)
+        else:
+            for name, parameter in block.named_parameters():
+                parameter.requires_grad_(name.endswith(('.lora_A', '.lora_B')))
+        print(f'backbone block {index}: {"LoRA only" if lora else "trainable"}')
     if not selected_blocks:
         print('backbone: frozen')
 

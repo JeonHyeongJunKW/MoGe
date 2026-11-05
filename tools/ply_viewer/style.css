@@ -2,3 +2,6 @@
 
 .dropzones{display:flex;gap:12px}.dropzones>div{flex:1;padding:14px;border:1px dashed #52718a;border-radius:8px;color:#b9cee5;font-size:13px}.dropzones small{display:block;margin-top:5px;color:#75c9d4;overflow-wrap:anywhere}.dropzones .dragover,body.dragging .dropzones>div{border-color:#83ecf6;background:#173243}article{position:relative}.axis-overlay{position:absolute;left:0;pointer-events:none;min-height:0!important}.dropzones>div:focus{outline:2px solid #75c9d4}
 .embedded header,.embedded main>.toolbar:first-child,.embedded .dropzones,.embedded .dropzones+.hint,.embedded main>details{display:none}.embedded main{padding:12px}.embedded canvas{height:420px}
+
+/* Fixed layout during playback; reserve status and preview space. */
+html{overflow-y:scroll;scrollbar-gutter:stable}#status{height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#play{min-width:112px}.grow{min-width:0}#sample{width:100%;min-width:0}.metadata{min-height:300px}.metadata img{aspect-ratio:16/9;object-fit:contain}.metadata pre{height:300px;flex:1;min-width:0}.view-title{height:43px;white-space:nowrap}

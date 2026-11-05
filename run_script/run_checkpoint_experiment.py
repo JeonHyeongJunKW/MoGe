@@ -13,6 +13,8 @@ def configure_model(config, checkpoint_model_config):
     result['model']['num_tokens_range'] = [experiment['num_tokens']] * 2
     if 'rgb_detail' in experiment:
         result['model']['rgb_detail'] = copy.deepcopy(experiment['rgb_detail'])
+    if 'lora' in experiment:
+        result['model']['lora'] = copy.deepcopy(experiment['lora'])
     for component in experiment['learning_rates']:
         if component != 'backbone' and result['model'].get(component) is None:
             raise ValueError(f'Checkpoint has no requested component: {component}')

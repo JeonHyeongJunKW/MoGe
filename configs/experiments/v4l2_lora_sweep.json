@@ -1,0 +1,11 @@
+{
+    "num_iterations": 3000,
+    "batch_size": 8,
+    "real_fraction": 0.25,
+    "pseudo_loss_weight": 0.25,
+    "experiments": [
+        {"name": "direct_last4", "lora_rank": 0, "lora_lr": 0.00001},
+        {"name": "lora_r4", "lora_rank": 4, "lora_lr": 0.00001},
+        {"name": "lora_r8", "lora_rank": 8, "lora_lr": 0.00001}
+    ]
+}

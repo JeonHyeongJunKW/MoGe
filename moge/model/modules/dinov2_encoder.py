@@ -49,7 +49,9 @@ class DINOv2Encoder(nn.Module):
 
     def init_weights(self):
         pretrained_backbone_state_dict = self.hub_loader(pretrained=True).state_dict()
-        self.backbone.load_state_dict(pretrained_backbone_state_dict)
+        missing, unexpected = self.backbone.load_state_dict(pretrained_backbone_state_dict, strict=False)
+        if unexpected or any(not key.endswith(('.lora_A', '.lora_B')) for key in missing):
+            raise RuntimeError(f'DINOv2 initialization mismatch: missing={missing}, unexpected={unexpected}')
 
     def enable_gradient_checkpointing(self):
         for i in range(len(self.backbone.blocks)):

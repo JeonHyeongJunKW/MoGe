@@ -43,6 +43,7 @@ class MoGeModel(nn.Module):
         remap_output: Literal['linear', 'sinh', 'exp', 'sinh_exp'] = 'linear',
         num_tokens_range: List[int] = [1200, 3600],
         rgb_detail: Optional[Dict[str, Any]] = None,
+        lora: Optional[Dict[str, Any]] = None,
         **deprecated_kwargs
     ):
         super(MoGeModel, self).__init__()
@@ -77,6 +78,10 @@ class MoGeModel(nn.Module):
             self.normal_head.fp32_output_projection = True
         if scale_head is not None:
             self.scale_head = MLP(**scale_head)
+        self.lora_config = lora
+        if lora is not None:
+            from .modules.lora import inject_lora
+            inject_lora(self.encoder.backbone, lora)
 
     @property
     def device(self) -> torch.device:
@@ -129,7 +134,10 @@ class MoGeModel(nn.Module):
         # means anything the checkpoint does not provide silently keeps its random initialization,
         # so report it -- e.g. loading a v2 checkpoint into a v3 config leaves the whole refiner
         # untrained, which is otherwise indistinguishable from a bad prediction.
-        missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=False)
+        has_adapters = any('.lora_' in key for key in checkpoint['model'])
+        if has_adapters != (model.lora_config is not None):
+            raise ValueError('LoRA weights and model configuration disagree; use the matching config or a merged checkpoint')
+        missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model'], strict=has_adapters)
         if missing_keys:
             warnings.warn(
                 f"{len(missing_keys)} parameter(s) are absent from the checkpoint and keep their random "

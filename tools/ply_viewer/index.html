@@ -7,7 +7,7 @@
 <section class="toolbar">
 <label>결과 검색<input id="search" type="search" placeholder="실험명, step 또는 샘플 번호"></label>
 <label class="grow">서버 결과<select id="sample"><option value="">결과를 선택하세요</option></select></label>
-<button id="refresh">새로고침</button><button id="prev" aria-label="이전 샘플">←</button><button id="next" aria-label="다음 샘플">→</button><button id="load">불러오기</button>
+<button id="refresh">새로고침</button><button id="prev" aria-label="이전 샘플">←</button><button id="next" aria-label="다음 샘플">→</button><button id="load">불러오기</button><button id="play" aria-pressed="false">▶ 재생</button><label>재생 간격<select id="interval"><option value="100">0.1초</option><option value="250" selected>0.25초</option><option value="500">0.5초</option><option value="1000">1초</option></select></label>
 </section>
 <div class="dropzones"><div data-slot="0" tabindex="0">GT PLY를 여기에 드롭 <small id="gtDropName">gt.ply</small></div><div data-slot="1" tabindex="0">Prediction PLY를 여기에 드롭 <small id="predDropName">pred.ply</small></div></div>
 <p class="hint">gt.ply + pred.ply를 함께 화면에 드롭하면 자동으로 비교합니다. 다른 이름의 두 파일은 첫 번째를 GT로 사용합니다.</p>
