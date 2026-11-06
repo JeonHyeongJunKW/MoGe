@@ -454,3 +454,45 @@ Teacher mask/normal loss 기록과 각 head의 조건 간 가중치 차이를 �
 ```bash
 tar -xzf /path/to/v4l2_multitask_sweep_code.tar.gz -C /home/coder/MoGe
 ```
+
+## 남은 r8 / direct_4를 두 MIG에서 병렬 실행
+
+`--devices`를 지정하면 선택한 실험을 manifest 순서대로 장치 하나씩 배정해
+동시에 실행한다. 각 프로세스의 `CUDA_VISIBLE_DEVICES`에는 식별자 하나만
+설정되며 Accelerate `num_processes=1`을 유지한다. 하나의 학습을 두 장치로
+분산하는 설정이 아니라 두 실험을 독립 실행하는 설정이다.
+
+서버에서 `nvidia-smi -L`로 MIG UUID 두 개를 확인한다. 일반 표에 표시된 GI ID
+3/6이나 MIG Dev 0/1을 UUID 대신 넣지 않는다. NVIDIA 공식 안내:
+https://docs.nvidia.com/datacenter/tesla/mig-user-guide/mig-device-names.html
+
+```bash
+cd ~/MoGe
+source .venv-moge/bin/activate
+nvidia-smi -L
+
+python run_script/run_v4l2_multitask_sweep.py \
+  --experiment lora_r8 --experiment direct_4 \
+  --devices 'MIG-첫번째-실제-UUID' 'MIG-두번째-실제-UUID' \
+  --data-root /home/coder/dataset \
+  --pseudo-root /home/coder/real_dataset/v4l2_pseudo_v3 \
+  --student ~/MoGe/pretrained/best_flip_mild_t400_total18500.pt \
+  --batch-size 8 --port-base 29600
+```
+
+두 `MIG-...` 문자열은 실제 UUID로 교체한다. 첫 번째는 r8, 두 번째는 direct_4에
+할당된다. 새 timestamp 출력 경로를 자동 생성하므로 기존 중단한 r4 결과는
+변경하지 않는다. 두 실험 모두 같은 최초 Student에서 3,000 updates 학습한다.
+이 명령은 기존 checkpoint를 resume하지 않는다.
+
+실행 시 출력되는 새 결과 폴더 아래에 `lora_r8.launch.log`, `direct_4.launch.log`가
+저장되며 각 실험의 checkpoint/validation은 해당 실험 이름 하위에 저장된다.
+`parallel_jobs.json`은 장치·포트·명령을 기록한다. 포트는 29600/29601로 분리한다.
+`summary.csv`/`summary.json`은 조건이 완료될 때 갱신된다. 한 조건이 실패해도
+다른 조건은 계속 실행하며 전체 종료 코드는 실패를 반영한다. Ctrl+C 또는
+SIGTERM으로 실행기를 종료하면 실행 중인 하위 학습 프로세스 그룹도 종료한다.
+
+`--dry-run`을 추가하면 두 설정/명령만 병렬 생성한다. `--smoke --num-iterations 1`
+을 추가하면 각 장치에서 1 update씩 점검한다. 두 MIG 각각의 가용 메모리를 사용하며
+메모리를 합쳐 쓰지 않는다. 로컬에서는 병렬 프로세스 격리/동시 실행/실패 격리 테스트와
+dry-run을 검증했다. 서버 MIG에서 실제 학습 실행은 아직 확인하지 않았다.

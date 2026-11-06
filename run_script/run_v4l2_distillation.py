@@ -184,6 +184,7 @@ def main():
     parser.add_argument('--real-fraction', type=float, default=.25, help='0 for CARLA-only control; default .25')
     parser.add_argument('--pseudo-loss-weight', type=float, default=.25)
     parser.add_argument('--num-iterations', type=int, default=3000)
+    parser.add_argument('--main-process-port', type=int, default=29500)
     parser.add_argument('--batch-size', type=int, default=8, help='Effective batch remains 32 on one GPU')
     parser.add_argument('--lora-rank', type=int, default=0, help='0: ordinary last-4 tuning; positive: attention LoRA only in backbone')
     parser.add_argument('--multitask-labels', action='store_true', help='Use v3 teacher_labels.npz, including for depth-only control')
@@ -195,6 +196,8 @@ def main():
     mode.add_argument('--smoke', action='store_true',
                       help='10 training updates; no validation/periodic checkpoints; trainer still writes final')
     args = parser.parse_args()
+    if not 1024 <= args.main_process_port <= 65535:
+        parser.error('main-process-port must be between 1024 and 65535')
     pseudo_root = args.pseudo_root or args.data_root / 'v4l2_pseudo_v1'
     config, validation, batch, accumulation = build_config(
         args.data_root, pseudo_root, args.real_fraction, args.pseudo_loss_weight,
@@ -221,6 +224,7 @@ def main():
         from tools.v4l2_distillation import sha256
         write_json(root / 'initial_student.json', dict(path=str(args.student.resolve()), sha256=sha256(args.student)))
     command = [sys.executable, '-u', '-m', 'accelerate.commands.launch', '--num_processes', '1',
+               '--num_machines', '1', '--main_process_port', str(args.main_process_port),
                '--module', 'moge.train.train_moge12', '--config', str(root / 'train_config.json'),
                '--initial_checkpoint', str(args.student.resolve()), '--checkpoint', 'none',
                '--workspace', str(root), '--name', config['sweep_experiment']['name'],

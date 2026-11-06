@@ -52,6 +52,8 @@ def main(default_manifest=None):
     parser.add_argument('--pseudo-root', type=Path)
     parser.add_argument('--student', type=Path, default=ROOT / 'pretrained/best_flip_mild_t400_total18500.pt')
     parser.add_argument('--experiment', action='append', help='Experiment name from manifest; repeatable')
+    parser.add_argument('--devices', nargs='+', help='One distinct CUDA device/MIG UUID per selected experiment; enables parallel execution in manifest order')
+    parser.add_argument('--port-base', type=int, default=29600)
     parser.add_argument('--batch-size', type=int)
     parser.add_argument('--num-iterations', type=int)
     mode = parser.add_mutually_exclusive_group()
@@ -69,6 +71,13 @@ def main(default_manifest=None):
         experiments = [e for e in experiments if e['name'] in args.experiment]
     if not experiments:
         parser.error('No experiments selected')
+    if args.devices:
+        if len(args.devices) != len(experiments) or len(set(args.devices)) != len(args.devices):
+            parser.error('--devices requires one distinct device per selected experiment')
+        if any(not d.strip() or ',' in d or d != d.strip() for d in args.devices):
+            parser.error('Each device must be a single CUDA identifier (use MIG UUIDs for MIG)')
+    if not 1024 <= args.port_base <= 65535 - len(experiments) + 1:
+        parser.error('Invalid port range')
     batch = args.batch_size if args.batch_size is not None else manifest['batch_size']
     iterations = args.num_iterations if args.num_iterations is not None else manifest['num_iterations']
     # Validate all recipes before creating outputs or launching any training.
@@ -89,7 +98,8 @@ def main(default_manifest=None):
     (root / 'invocation.json').write_text(json.dumps({k: str(v) if isinstance(v, Path) else v
                                                     for k, v in vars(args).items()}, indent=2) + '\n')
     runs = []
-    for experiment in experiments:
+    jobs = []
+    for index, experiment in enumerate(experiments):
         name = experiment['name']
         command = [sys.executable, str(ROOT / 'run_script/run_v4l2_distillation.py'),
                    '--root', str(root / name), '--data-root', str(args.data_root.resolve()),
@@ -98,6 +108,7 @@ def main(default_manifest=None):
                    '--pseudo-loss-weight', str(manifest['pseudo_loss_weight']),
                    '--batch-size', str(batch), '--num-iterations', str(iterations),
                    '--lora-rank', str(experiment['lora_rank']), '--lora-lr', str(experiment['lora_lr'])]
+        command += ['--main-process-port', str(args.port_base + index)]
         if manifest.get('multitask_labels'):
             command += ['--multitask-labels', '--mask-weight', str(experiment.get('mask_weight', 0.)),
                         '--normal-weight', str(experiment.get('normal_weight', 0.))]
@@ -105,6 +116,9 @@ def main(default_manifest=None):
             command.append('--dry-run')
         if args.smoke:
             command.append('--smoke')
+        if args.devices:
+            jobs.append(dict(name=name, rank=experiment['lora_rank'], command=command, device=args.devices[index], port=args.port_base + index))
+            continue
         print(f'Experiment: {name}', flush=True)
         code = subprocess.call(command, cwd=ROOT)
         status = f'failed({code})' if code else 'dry_run' if args.dry_run else 'smoke_ok' if args.smoke else 'ok'
@@ -113,6 +127,9 @@ def main(default_manifest=None):
         if code:
             print('Stopping sweep after failed experiment; inspect its log before restarting.', flush=True)
             break
+    if jobs:
+        from run_script.parallel_sweep import run_parallel
+        runs = run_parallel(jobs, root, ROOT, 'dry_run' if args.dry_run else 'smoke_ok' if args.smoke else 'ok', summarize)
     print(f'Results: {root}', flush=True)
     return int(any(status.startswith('failed') for _, _, status in runs))
 
