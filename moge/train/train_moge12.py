@@ -26,6 +26,8 @@ from .losses import (
     affine_invariant_local_loss,
     edge_loss,
     mask_bce_loss,
+    teacher_mask_bce_loss,
+    teacher_normal_cosine_loss,
     mask_l2_loss,
     metric_scale_loss,
     monitoring,
@@ -394,7 +396,10 @@ def main(
                                         weight_dict[name] = spec['weight']
                                         function = spec['function']
                                         params = spec.get('params', {})
-                                        if function == 'normal_map_loss':
+                                        if function == 'teacher_normal_cosine_loss':
+                                            loss_dict[name], misc_dict[name] = teacher_normal_cosine_loss(
+                                                pred_normal[i], gt_normal[i], **params)
+                                        elif function == 'normal_map_loss':
                                             loss_dict[name], misc_dict[name] = normal_map_loss(
                                                 pred_normal[i], gt_normal[i], **params,
                                             )
@@ -406,7 +411,11 @@ def main(
                                         weight_dict[name] = spec['weight']
                                         function = spec['function']
                                         params = spec.get('params', {})
-                                        if function == 'mask_bce_loss':
+                                        if function == 'teacher_mask_bce_loss':
+                                            loss_dict[name], misc_dict[name] = teacher_mask_bce_loss(
+                                                pred_mask[i], batch['teacher_mask_probability'][i],
+                                                batch['teacher_mask_valid'][i], **params)
+                                        elif function == 'mask_bce_loss':
                                             loss_dict[name], misc_dict[name] = mask_bce_loss(
                                                 pred_mask[i], gt_mask_fin[i], gt_mask_inf[i], **params,
                                             )

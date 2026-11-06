@@ -1,0 +1,32 @@
+{
+    "workspace_group": "v4l2_multitask_sweep",
+    "num_iterations": 3000,
+    "batch_size": 8,
+    "real_fraction": 0.25,
+    "pseudo_loss_weight": 0.25,
+    "multitask_labels": true,
+    "pseudo_root": "/home/coder/real_dataset/v4l2_pseudo_v3",
+    "experiments": [
+        {
+            "name": "lora_r4",
+            "lora_rank": 4,
+            "lora_lr": 1e-05,
+            "mask_weight": 0.1,
+            "normal_weight": 0.1
+        },
+        {
+            "name": "lora_r8",
+            "lora_rank": 8,
+            "lora_lr": 1e-05,
+            "mask_weight": 0.1,
+            "normal_weight": 0.1
+        },
+        {
+            "name": "direct_4",
+            "lora_rank": 0,
+            "lora_lr": 1e-05,
+            "mask_weight": 0.1,
+            "normal_weight": 0.1
+        }
+    ]
+}

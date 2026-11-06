@@ -224,13 +224,36 @@ def filter_depth(depth, model_mask, rectification_valid, min_depth, max_depth,
     return np.where(valid, depth, np.nan).astype(np.float32)
 
 
+def auxiliary_labels(probability, normal, geometry_mask, rectification_valid):
+    """Keep mask negatives separate from depth filters; normals use camera XYZ."""
+    import numpy as np
+    probability = np.asarray(probability, dtype=np.float32)
+    normal = np.asarray(normal, dtype=np.float32)
+    shape = probability.shape
+    if (len(shape) != 2 or normal.shape != (*shape, 3) or
+            np.shape(geometry_mask) != shape or np.shape(rectification_valid) != shape):
+        raise ValueError('Auxiliary label shape mismatch')
+    if not np.isfinite(probability).all() or not ((probability >= 0) & (probability <= 1)).all():
+        raise ValueError('Invalid teacher mask probabilities')
+    norm = np.linalg.norm(normal, axis=-1)
+    normal_finite = np.isfinite(normal).all(axis=-1) & np.isfinite(norm) & (norm > 1e-6)
+    unit = np.zeros_like(normal)
+    unit[normal_finite] = normal[normal_finite] / norm[normal_finite, None]
+    rect = np.asarray(rectification_valid, dtype=bool)
+    geometry_mask = np.asarray(geometry_mask, dtype=bool)
+    return dict(mask_probability=probability, teacher_mask=probability > .5,
+                geometry_mask=np.asarray(geometry_mask, dtype=bool), mask_valid=rect,
+                normal=unit, normal_valid=rect & geometry_mask & normal_finite)
+
+
 def pseudo(args):
     import shutil
     import cv2
     import numpy as np
     import torch
     from moge.model.v2 import MoGeModel
-    from moge.utils.io import read_image, write_depth
+    from moge.utils.io import read_image, write_depth, write_normal
+    include_aux = getattr(args, 'include_auxiliary_labels', False)
     if (not math.isfinite(args.min_depth) or not math.isfinite(args.max_depth) or
             not 0 < args.min_depth < args.max_depth or not 0 < args.min_valid_fraction <= 1 or
             not 0 <= args.flip_consistency_threshold <= 1 or args.num_tokens < 1):
@@ -251,6 +274,8 @@ def pseudo(args):
                     fov_override=None, min_depth=args.min_depth, max_depth=args.max_depth,
                     min_valid_fraction=args.min_valid_fraction,
                     flip_consistency_threshold=args.flip_consistency_threshold)
+    if include_aux:
+        settings['auxiliary_labels'] = 'mask_probability_and_camera_normal_v1'
     if staging.exists():
         if not args.resume or read_json(staging / 'generation.json')['settings'] != settings:
             raise ValueError('Partial output exists. Resume only with identical inputs/settings, or use a new output.')
@@ -264,6 +289,8 @@ def pseudo(args):
     model = MoGeModel.from_pretrained(str(teacher)).to(device).eval().requires_grad_(False)
     if not hasattr(model, 'scale_head') or model.scale_head is None:
         raise ValueError('Teacher must have a metric scale head')
+    if include_aux and any(getattr(model, name, None) is None for name in ('mask_head', 'normal_head')):
+        raise ValueError('Auxiliary labels require teacher mask and normal heads')
     records, rejected = [], []
     with torch.inference_mode():
         for i, row in enumerate(info['samples']):
@@ -285,7 +312,8 @@ def pseudo(args):
                 rgb = read_image(src / 'image.jpg')
                 valid = cv2.imread(str(src / 'rectification_valid.png'), cv2.IMREAD_GRAYSCALE) > 0
                 x = torch.from_numpy(rgb.copy()).permute(2, 0, 1).float().to(device) / 255
-                pred = model.infer(x, num_tokens=args.num_tokens, use_fp16=args.fp16, apply_mask=False)
+                extra = {'return_mask_probability': True} if include_aux else {}
+                pred = model.infer(x, num_tokens=args.num_tokens, use_fp16=args.fp16, apply_mask=False, **extra)
                 depth, mask = pred['depth'].cpu().numpy(), pred['mask'].cpu().numpy()
                 fd = fm = None
                 if args.flip_consistency_threshold:
@@ -300,6 +328,21 @@ def pseudo(args):
                 if result['accepted']:
                     shutil.copyfile(src / 'image.jpg', dst / 'image.jpg')
                     write_depth(dst / 'depth.png', depth)
+                    extra_files = []
+                    if include_aux:
+                        labels = auxiliary_labels(pred['mask_probability'].cpu().numpy(),
+                                                  pred['normal'].cpu().numpy(), mask, valid)
+                        labels['depth_valid'] = np.isfinite(depth)
+                        np.savez_compressed(dst / 'teacher_labels.npz', **labels)
+                        for filename, array in [('teacher_mask.png', labels['teacher_mask']),
+                                                ('mask_valid.png', labels['mask_valid']),
+                                                ('normal_valid.png', labels['normal_valid'])]:
+                            if not cv2.imwrite(str(dst / filename), array.astype(np.uint8) * 255):
+                                raise IOError(f'Failed to write {filename}')
+                        write_normal(dst / 'normal.png', np.where(labels['normal_valid'][..., None],
+                                                                 labels['normal'], np.nan))
+                        extra_files = ['teacher_labels.npz', 'teacher_mask.png', 'mask_valid.png',
+                                       'normal_valid.png', 'normal.png']
                     meta = read_json(src / 'meta.json')
                     meta.update(metric_scale=1.0, depth_unit='meter', depth_type='camera_z',
                                 label_source='teacher_prediction_not_ground_truth',
@@ -307,9 +350,17 @@ def pseudo(args):
                                 teacher_num_tokens=args.num_tokens,
                                 teacher_predicted_intrinsics=pred['intrinsics'].cpu().tolist(),
                                 valid_fraction=fraction)
+                    if include_aux:
+                        meta['auxiliary_labels'] = dict(
+                            file='teacher_labels.npz', normal_coordinates='OpenCV camera: x right, y down, z forward',
+                            normal_source='teacher normal head, renormalized to unit vectors; no sign flip',
+                            mask_target='raw sigmoid probability, before positive-depth/range filters',
+                            mask_valid='rectification-valid pixels, INCLUDING teacher negatives',
+                            normal_valid='rectification AND teacher infer geometry mask AND finite nonzero normal; no depth-range filter',
+                            depth_valid='finite filtered depth', normal_horizontal_flip='reverse width and negate x component')
                     write_json(dst / 'meta.json', meta)
                     result['output_sha256'] = {name: sha256(dst / name)
-                                               for name in ('image.jpg', 'depth.png', 'meta.json')}
+                                               for name in ['image.jpg', 'depth.png', 'meta.json', *extra_files]}
                 write_json(done, result)
             entry = {**row, 'valid_fraction': result['valid_fraction']}
             if result['accepted']:
@@ -321,7 +372,7 @@ def pseudo(args):
     if not records:
         raise ValueError('No accepted pseudo labels; adjust data/model before training')
     write_indices(staging, records)
-    write_json(staging / 'dataset.json', dict(format='moge_v4l2_pseudo_v1', status='complete',
+    write_json(staging / 'dataset.json', dict(format='moge_v4l2_multitask_v1' if include_aux else 'moge_v4l2_pseudo_v1', status='complete',
                settings=settings, samples=records, rejected=rejected,
                counts={s: sum(r['split'] == s for r in records) for s in SPLITS},
                evaluation_note='Real pseudo labels are teacher agreement targets, not independent ground truth.'))
@@ -347,6 +398,8 @@ def main():
     p.add_argument('--num-tokens', type=int, default=1200)
     p.add_argument('--device', default='cuda')
     p.add_argument('--fp16', action='store_true', help='Match reviewed FP16 inference; default FP32')
+    p.add_argument('--include-auxiliary-labels', action='store_true',
+                   help='Also save raw mask probabilities, camera normals and separate supervision masks (new multitask format)')
     p.add_argument('--min-depth', type=float, default=0.1)
     p.add_argument('--max-depth', type=float, default=100.0)
     p.add_argument('--min-valid-fraction', type=float, default=0.1)

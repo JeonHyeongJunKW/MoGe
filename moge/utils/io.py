@@ -206,7 +206,7 @@ def read_normal(path: Union[str, os.PathLike, IO]) -> np.ndarray:
     normal = cv2.cvtColor(cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB)
     mask_nan = np.all(normal == 0, axis=-1)
     normal = (normal.astype(np.float32) / 65535 - 0.5) * [2.0, -2.0, -2.0]
-    normal = normal / (np.sqrt(np.square(normal[..., 0]) + np.square(normal[..., 1]) + np.square(normal[..., 2])) + 1e-12)
+    normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-12)
     normal[mask_nan] = np.nan
     return normal
 
@@ -216,7 +216,7 @@ def write_normal(path: Union[str, os.PathLike, IO], normal: np.ndarray, compress
     Write a normal image, input float32 normal array of shape (H, W, 3).
     """
     mask_nan = np.isnan(normal).any(axis=-1)
-    normal = ((normal * [0.5, -0.5, -0.5] + 0.5).clip(0, 1) * 65535).astype(np.uint16)
+    normal = ((np.nan_to_num(normal) * [0.5, -0.5, -0.5] + 0.5).clip(0, 1) * 65535).astype(np.uint16)
     normal[mask_nan] = 0
     data = cv2.imencode('.png', cv2.cvtColor(normal, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_PNG_COMPRESSION, compression_level])[1].tobytes()
     if isinstance(path, (str, os.PathLike)):

@@ -264,6 +264,7 @@ class MoGeModel(nn.Module):
         apply_mask: bool = True,
         fov_x: Optional[Union[Number, torch.Tensor]] = None,
         use_fp16: bool = True,
+        return_mask_probability: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         User-friendly inference function
@@ -276,6 +277,7 @@ class MoGeModel(nn.Module):
         - `apply_mask`: if True, the output point map will be masked using the predicted mask. Default: True
         - `fov_x`: the horizontal camera FoV in degrees. If None, it will be inferred from the predicted point map. Default: None
         - `use_fp16`: if True, use mixed precision to speed up inference. Default: True
+        - `return_mask_probability`: also return the raw mask-head probability, before geometry or depth filtering.
             
         ### Returns
 
@@ -358,6 +360,8 @@ class MoGeModel(nn.Module):
             'mask': mask_binary,
             'normal': normal
         }
+        if return_mask_probability and mask is not None:
+            return_dict['mask_probability'] = mask
         return_dict = {k: v for k, v in return_dict.items() if v is not None}
 
         if omit_batch_dim:

@@ -22,10 +22,14 @@ def summarize(root, runs):
         best = read_optional(directory / 'validation/best.json')
         memory = read_optional(directory / 'training_memory.json')
         assignments = read_optional(directory / 'optimizer_param_assignments.json')
+        config = read_optional(directory / 'train_config.json')
+        pseudo_loss = config.get('loss', {}).get('PSEUDO', {})
         parameters = assignments.get('parameters', [])
         metrics = best.get('metrics', {}).get('mean', {})
         trainable = [p for p in parameters if p['requires_grad']]
         rows.append(dict(experiment=name, rank=rank, status=status,
+                         teacher_mask_weight=sum(v['weight'] for v in pseudo_loss.get('mask', {}).values()),
+                         teacher_normal_weight=sum(v['weight'] for v in pseudo_loss.get('normal', {}).values()),
                          initial_rel=initial.get('score', ''), best_rel=best.get('score', ''),
                          best_delta1=metrics.get('depth_metric/delta1', ''), best_step=best.get('step', ''),
                          trainable_parameters=sum(p['numel'] for p in trainable) if parameters else '',
@@ -40,14 +44,14 @@ def summarize(root, runs):
     print(json.dumps(rows, indent=2), flush=True)
 
 
-def main():
+def main(default_manifest=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--manifest', type=Path, default=ROOT / 'configs/experiments/v4l2_lora_sweep.json')
+    parser.add_argument('--manifest', type=Path, default=default_manifest or ROOT / 'configs/experiments/v4l2_lora_sweep.json')
     parser.add_argument('--root', type=Path)
     parser.add_argument('--data-root', type=Path, default=Path('/home/coder/dataset'))
     parser.add_argument('--pseudo-root', type=Path)
     parser.add_argument('--student', type=Path, default=ROOT / 'pretrained/best_flip_mild_t400_total18500.pt')
-    parser.add_argument('--experiment', action='append', help='direct_last4, lora_r4 or lora_r8; repeatable')
+    parser.add_argument('--experiment', action='append', help='Experiment name from manifest; repeatable')
     parser.add_argument('--batch-size', type=int)
     parser.add_argument('--num-iterations', type=int)
     mode = parser.add_mutually_exclusive_group()
@@ -70,12 +74,13 @@ def main():
     # Validate all recipes before creating outputs or launching any training.
     sys.path.insert(0, str(ROOT))
     from run_script.run_v4l2_distillation import build_config
-    pseudo = args.pseudo_root or args.data_root / 'v4l2_pseudo_v1'
+    pseudo = args.pseudo_root or Path(manifest.get('pseudo_root', args.data_root / 'v4l2_pseudo_v1'))
     for e in experiments:
         build_config(args.data_root, pseudo, manifest['real_fraction'], manifest['pseudo_loss_weight'],
-                     iterations, batch, e['lora_rank'], e['lora_lr'])
+                     iterations, batch, e['lora_rank'], e['lora_lr'],
+                     manifest.get('multitask_labels', False), e.get('mask_weight', 0.), e.get('normal_weight', 0.))
     label = 'dry_run' if args.dry_run else 'smoke' if args.smoke else 'train'
-    root = (args.root or ROOT / 'workspace/v4l2_lora_sweep' /
+    root = (args.root or ROOT / 'workspace' / manifest.get('workspace_group', 'v4l2_lora_sweep') /
             (datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_' + label)).resolve()
     if root.exists() and any(root.iterdir()):
         parser.error(f'Output directory is not empty: {root}')
@@ -93,6 +98,9 @@ def main():
                    '--pseudo-loss-weight', str(manifest['pseudo_loss_weight']),
                    '--batch-size', str(batch), '--num-iterations', str(iterations),
                    '--lora-rank', str(experiment['lora_rank']), '--lora-lr', str(experiment['lora_lr'])]
+        if manifest.get('multitask_labels'):
+            command += ['--multitask-labels', '--mask-weight', str(experiment.get('mask_weight', 0.)),
+                        '--normal-weight', str(experiment.get('normal_weight', 0.))]
         if args.dry_run:
             command.append('--dry-run')
         if args.smoke:
@@ -102,6 +110,9 @@ def main():
         status = f'failed({code})' if code else 'dry_run' if args.dry_run else 'smoke_ok' if args.smoke else 'ok'
         runs.append((name, experiment['lora_rank'], status))
         summarize(root, runs)
+        if code:
+            print('Stopping sweep after failed experiment; inspect its log before restarting.', flush=True)
+            break
     print(f'Results: {root}', flush=True)
     return int(any(status.startswith('failed') for _, _, status in runs))
 

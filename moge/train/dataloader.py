@@ -183,6 +183,8 @@ class TrainDataLoaderPipeline:
             'depth': invalid_depth,
             'depth_mask_fin': np.isfinite(invalid_depth),
             'depth_mask_inf': np.isinf(invalid_depth),
+            'teacher_mask_probability': np.zeros((height, width), dtype=np.float32),
+            'teacher_mask_valid': np.zeros((height, width), dtype=bool),
             'label_type': 'invalid',
             'is_metric': False,
         }
@@ -269,6 +271,11 @@ class TrainDataLoaderPipeline:
                 'path': str(instance['path']),
                 'has_metric_annotation': has_metric_annotation,
             }
+            auxiliary = self.datasets[instance['dataset']].get('teacher_labels')
+            if auxiliary:
+                with np.load(Path(instance['path'], auxiliary), allow_pickle=False) as labels:
+                    data['teacher_labels'] = {k: labels[k].copy() for k in
+                                             ('normal', 'normal_valid', 'mask_probability', 'mask_valid')}
             instance.update({
                 **data,
             })
@@ -289,8 +296,12 @@ class TrainDataLoaderPipeline:
                 return instance
 
             raw_image, raw_depth, raw_intrinsics = instance['image'], instance['depth'], instance['intrinsics']
-            raw_normal, raw_normal_mask = utils3d.np.depth_map_to_normal_map(raw_depth, intrinsics=raw_intrinsics, mask=np.isfinite(raw_depth), edge_threshold=88)
-            raw_normal = np.where(raw_normal_mask[..., None], raw_normal, np.nan)
+            auxiliary = instance.get('teacher_labels')
+            if auxiliary is not None:
+                raw_normal = np.where(auxiliary['normal_valid'][..., None], auxiliary['normal'], np.nan)
+            else:
+                raw_normal, raw_normal_mask = utils3d.np.depth_map_to_normal_map(raw_depth, intrinsics=raw_intrinsics, mask=np.isfinite(raw_depth), edge_threshold=88)
+                raw_normal = np.where(raw_normal_mask[..., None], raw_normal, np.nan)
             depth_unit = self.datasets[instance['dataset']].get('depth_unit', None)
 
             ds_cfg = self.datasets[instance['dataset']]
@@ -378,6 +389,24 @@ class TrainDataLoaderPipeline:
                 warped_normal = warp_perspective(raw_normal, transform, (tgt_height, tgt_width), interpolation='bilinear')
                 tgt_normal = warped_normal @ R.T
 
+            # Mask supervision is independent of the depth-range and geometry filters.
+            tgt_teacher_probability = np.zeros((tgt_height, tgt_width), dtype=np.float32)
+            tgt_teacher_valid = np.zeros((tgt_height, tgt_width), dtype=bool)
+            if auxiliary is not None:
+                if not perspective_warp and not resize:
+                    tgt_teacher_probability = auxiliary['mask_probability'].copy()
+                    tgt_teacher_valid = auxiliary['mask_valid'].copy()
+                else:
+                    tgt_teacher_probability = warp_perspective(auxiliary['mask_probability'], transform,
+                        (tgt_height, tgt_width), interpolation='bilinear')
+                    support = warp_perspective(auxiliary['mask_valid'].astype(np.float32), transform,
+                        (tgt_height, tgt_width), interpolation='bilinear')
+                    tgt_teacher_valid = np.isfinite(support) & (support >= 1 - 1e-6)
+                tgt_teacher_valid &= np.isfinite(tgt_teacher_probability)
+                tgt_teacher_probability = np.nan_to_num(tgt_teacher_probability).clip(0, 1)
+                normal_length = np.linalg.norm(tgt_normal, axis=-1, keepdims=True)
+                tgt_normal = np.where(normal_length > 1e-6, tgt_normal / np.maximum(normal_length, 1e-6), np.nan)
+
             # always make sure that mask is not empty
             if np.isfinite(tgt_depth).sum() / tgt_depth.size < 0.001:
                 tgt_depth = np.ones_like(tgt_depth)
@@ -394,6 +423,8 @@ class TrainDataLoaderPipeline:
             if flip_augmentation and rng.choice([True, False]):
                 tgt_image = np.flip(tgt_image, axis=1).copy()
                 tgt_depth = np.flip(tgt_depth, axis=1).copy()
+                tgt_teacher_probability = np.flip(tgt_teacher_probability, axis=1).copy()
+                tgt_teacher_valid = np.flip(tgt_teacher_valid, axis=1).copy()
                 tgt_normal = np.flip(tgt_normal, axis=1).copy() * [-1, 1, 1]
                 tgt_intrinsics = tgt_intrinsics.copy()
                 tgt_intrinsics[0, 2] = 1.0 - tgt_intrinsics[0, 2]
@@ -437,6 +468,8 @@ class TrainDataLoaderPipeline:
                 'depth': torch.from_numpy(tgt_depth).float(),
                 'depth_mask_fin': torch.from_numpy(tgt_depth_mask_fin).bool(),
                 'depth_mask_inf': torch.from_numpy(tgt_depth_mask_inf).bool(),
+                'teacher_mask_probability': torch.from_numpy(tgt_teacher_probability).float(),
+                'teacher_mask_valid': torch.from_numpy(tgt_teacher_valid).bool(),
                 "normal": torch.from_numpy(tgt_normal).float(),
                 'intrinsics': torch.from_numpy(tgt_intrinsics).float(),
             })
@@ -460,7 +493,7 @@ class TrainDataLoaderPipeline:
                     print(f"Replacing invalid instance at index {i} with size ({inst_w}, {inst_h}). Instance: dataset={instances[i].get('dataset', 'N/A')}, filename={instances[i].get('filename', 'N/A')}")
                     instances[i].update(self._get_invalid_instance(torch_instance=True, height=inst_h, width=inst_w))
 
-            batch = {k: torch.stack([instance[k] for instance in instances], dim=0) for k in ['image', 'depth', 'depth_mask_fin', 'depth_mask_inf', 'normal', 'intrinsics']}
+            batch = {k: torch.stack([instance[k] for instance in instances], dim=0) for k in ['image', 'depth', 'depth_mask_fin', 'depth_mask_inf', 'normal', 'intrinsics', 'teacher_mask_probability', 'teacher_mask_valid']}
             batch = {
                 'label_type': [instance['label_type'] for instance in instances],
                 'is_metric': [instance['is_metric'] for instance in instances],
@@ -484,7 +517,7 @@ class TrainDataLoaderPipeline:
                 print("Also failed to dump instances because of:", e2)
             # return batch of invalid instances
             batch_size = len(instances)
-            batch = {k: torch.stack([self._get_invalid_instance(torch_instance=True, height=inst_h, width=inst_w, gen_info=True)[k] for _ in range(batch_size)], dim=0) for k in ['image', 'depth', 'depth_mask_fin', 'depth_mask_inf', 'normal', 'intrinsics']}
+            batch = {k: torch.stack([self._get_invalid_instance(torch_instance=True, height=inst_h, width=inst_w, gen_info=True)[k] for _ in range(batch_size)], dim=0) for k in ['image', 'depth', 'depth_mask_fin', 'depth_mask_inf', 'normal', 'intrinsics', 'teacher_mask_probability', 'teacher_mask_valid']}
             batch = {
                 'label_type': ['invalid'] * batch_size,
                 'is_metric': [False] * batch_size,

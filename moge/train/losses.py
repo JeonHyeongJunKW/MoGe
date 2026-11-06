@@ -361,6 +361,21 @@ def mask_bce_loss(pred_mask_prob: torch.Tensor, gt_mask_pos: torch.Tensor, gt_ma
     return loss, {}
 
 
+def teacher_mask_bce_loss(pred_probability, target_probability, valid):
+    """Soft teacher BCE, averaged over supervised pixels including negatives."""
+    target = torch.where(valid, target_probability, 0).float()
+    loss = F.binary_cross_entropy(pred_probability.float(), target, reduction='none')
+    return (loss * valid).sum() / valid.sum().clamp_min(1), {}
+
+
+def teacher_normal_cosine_loss(pred_normal, target_normal):
+    """Directed camera normals; unknown pixels do not contribute."""
+    valid = torch.isfinite(target_normal).all(-1) & (target_normal.nan_to_num().norm(dim=-1) > 1e-6)
+    target = torch.where(valid[..., None], target_normal, 0).float()
+    cosine = F.cosine_similarity(pred_normal.float(), target, dim=-1, eps=1e-6).clamp(-1, 1)
+    return ((1 - cosine) * valid).sum() / valid.sum().clamp_min(1), {}
+
+
 def metric_scale_loss(scale_pred: torch.Tensor, scale_gt: torch.Tensor):
     valid = scale_gt > 0
     return torch.where(valid, F.mse_loss(scale_pred.log(), torch.where(valid, scale_gt.log(), 0), reduction='none'), 0), {}

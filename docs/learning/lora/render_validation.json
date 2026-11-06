@@ -1,0 +1,105 @@
+{
+  "pages": 14,
+  "layout": [
+    {
+      "page": 1,
+      "contentBottom": 959.21875,
+      "footerTop": 1054.28125,
+      "gap": 95.0625
+    },
+    {
+      "page": 2,
+      "contentBottom": 1004.859375,
+      "footerTop": 1054.28125,
+      "gap": 49.421875
+    },
+    {
+      "page": 3,
+      "contentBottom": 975.046875,
+      "footerTop": 1054.28125,
+      "gap": 79.234375
+    },
+    {
+      "page": 4,
+      "contentBottom": 1033.15625,
+      "footerTop": 1054.28125,
+      "gap": 21.125
+    },
+    {
+      "page": 5,
+      "contentBottom": 895.765625,
+      "footerTop": 1054.28125,
+      "gap": 158.515625
+    },
+    {
+      "page": 6,
+      "contentBottom": 884.1875,
+      "footerTop": 1054.28125,
+      "gap": 170.09375
+    },
+    {
+      "page": 7,
+      "contentBottom": 1033.25,
+      "footerTop": 1054.28125,
+      "gap": 21.03125
+    },
+    {
+      "page": 8,
+      "contentBottom": 954.328125,
+      "footerTop": 1054.28125,
+      "gap": 99.953125
+    },
+    {
+      "page": 9,
+      "contentBottom": 935.890625,
+      "footerTop": 1054.28125,
+      "gap": 118.390625
+    },
+    {
+      "page": 10,
+      "contentBottom": 1013.03125,
+      "footerTop": 1054.28125,
+      "gap": 41.25
+    },
+    {
+      "page": 11,
+      "contentBottom": 1012.140625,
+      "footerTop": 1054.28125,
+      "gap": 42.140625
+    },
+    {
+      "page": 12,
+      "contentBottom": 987.875,
+      "footerTop": 1054.28125,
+      "gap": 66.40625
+    },
+    {
+      "page": 13,
+      "contentBottom": 897.09375,
+      "footerTop": 1054.28125,
+      "gap": 157.1875
+    },
+    {
+      "page": 14,
+      "contentBottom": 901.15625,
+      "footerTop": 1054.28125,
+      "gap": 153.125
+    }
+  ],
+  "text_characters": [
+    513,
+    856,
+    486,
+    608,
+    820,
+    801,
+    809,
+    853,
+    892,
+    947,
+    845,
+    939,
+    677,
+    1220
+  ]
+}

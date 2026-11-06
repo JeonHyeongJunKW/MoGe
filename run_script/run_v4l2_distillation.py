@@ -17,7 +17,12 @@ from run_script.sweep_5000 import COMPONENTS, execute, resolve_experiment, write
 
 
 def build_config(data_root, pseudo_root, real_fraction=.25, pseudo_loss_weight=.25,
-                 iterations=3000, batch_size=8, lora_rank=0, lora_lr=1e-5):
+                 iterations=3000, batch_size=8, lora_rank=0, lora_lr=1e-5,
+                 multitask_labels=False, mask_weight=0.0, normal_weight=0.0):
+    if any(not math.isfinite(w) or w < 0 for w in (mask_weight, normal_weight)):
+        raise ValueError('Auxiliary loss weights must be finite and nonnegative')
+    if (mask_weight or normal_weight) and (not multitask_labels or not real_fraction):
+        raise ValueError('Auxiliary losses require multitask labels and real samples')
     if type(lora_rank) is not int or lora_rank < 0 or not math.isfinite(lora_lr) or lora_lr <= 0:
         raise ValueError('Invalid LoRA rank or learning rate')
     if not math.isfinite(real_fraction) or not 0 <= real_fraction < 1:
@@ -59,12 +64,18 @@ def build_config(data_root, pseudo_root, real_fraction=.25, pseudo_loss_weight=.
         pseudo = dict(name='v4l2_teacher_pseudo_train', path=str(Path(pseudo_root).resolve()),
                       index='.train.txt', label_type='PSEUDO', weight=real_fraction,
                       depth='depth.png', depth_unit=1.0, finite_depth_mask='only_known')
+        if multitask_labels:
+            pseudo['teacher_labels'] = 'teacher_labels.npz'
         config['data']['datasets'].append(pseudo)
-        # Supervise geometry + metric scale, not teacher mask/normal heads.
-        # Existing normal/mask heads still receive CARLA supervision through A.
+        # Keep depth-only behavior by default; auxiliary heads are opt-in.
+        # CARLA normal/mask supervision through A remains active in every arm.
         loss = copy.deepcopy(config['loss']['A'])
         loss.pop('normal', None)
         loss.pop('mask', None)
+        if mask_weight:
+            loss['mask'] = {'teacher_mask': dict(function='teacher_mask_bce_loss', weight=mask_weight)}
+        if normal_weight:
+            loss['normal'] = {'teacher_normal': dict(function='teacher_normal_cosine_loss', weight=normal_weight)}
         for group in loss.values():
             for spec in group.values():
                 spec['weight'] *= pseudo_loss_weight
@@ -73,6 +84,10 @@ def build_config(data_root, pseudo_root, real_fraction=.25, pseudo_loss_weight=.
                                   real_sampling_fraction=real_fraction,
                                   pseudo_loss_multiplier=pseudo_loss_weight,
                                   real_labels_are_ground_truth=False)
+    if multitask_labels:
+        config['distillation'].update(method='offline_teacher_multitask', mask_weight=mask_weight,
+                                      normal_weight=normal_weight, mask_target='soft_probability')
+        config['sweep_experiment']['name'] += f'_mask{mask_weight:g}_normal{normal_weight:g}'
     config['data'].update(center_augmentation=0.0, fov_range_relative=[1.0, 1.0])
     validation.update(batch_size=8, every=250, per_image_metrics=False, depth_bins=None)
     return config, validation, batch, accumulation
@@ -101,7 +116,8 @@ def preflight(config, validation):
             continue
         root = Path(ds['path'])
         manifest = json.loads((root / 'dataset.json').read_text())
-        if manifest.get('status') != 'complete' or manifest.get('format') != 'moge_v4l2_pseudo_v1':
+        expected_format = 'moge_v4l2_multitask_v1' if ds.get('teacher_labels') else 'moge_v4l2_pseudo_v1'
+        if manifest.get('status') != 'complete' or manifest.get('format') != expected_format:
             raise ValueError('Expected complete v4l2 pseudo dataset')
         records = manifest['samples']
         expected = {r['sample'] for r in records if r['split'] == 'train'}
@@ -121,7 +137,21 @@ def preflight(config, validation):
             result = json.loads((sample / 'result.json').read_text())
             if not result['accepted']:
                 raise ValueError(f'Rejected pseudo sample in training: {name}')
-            for filename in ('image.jpg', 'depth.png', 'meta.json'):
+            filenames = ['image.jpg', 'depth.png', 'meta.json']
+            if ds.get('teacher_labels'):
+                filenames.append(ds['teacher_labels'])
+                import numpy as np
+                with np.load(sample / ds['teacher_labels'], allow_pickle=False) as labels:
+                    shape = labels['mask_probability'].shape
+                    if (labels['normal'].shape != (*shape, 3) or
+                            any(labels[k].shape != shape for k in ('mask_valid', 'normal_valid')) or
+                            not np.isfinite(labels['normal']).all() or
+                            not np.isfinite(labels['mask_probability']).all() or
+                            not ((labels['mask_probability'] >= 0) & (labels['mask_probability'] <= 1)).all()):
+                        raise ValueError(f'Invalid teacher labels: {sample}')
+                    if any(labels[k].dtype != bool for k in ('mask_valid', 'normal_valid')):
+                        raise ValueError(f'Invalid supervision masks: {sample}')
+            for filename in filenames:
                 if sha256(sample / filename) != result['output_sha256'][filename]:
                     raise ValueError(f'Pseudo sample changed: {sample / filename}')
             meta = json.loads((sample / 'meta.json').read_text())
@@ -156,6 +186,9 @@ def main():
     parser.add_argument('--num-iterations', type=int, default=3000)
     parser.add_argument('--batch-size', type=int, default=8, help='Effective batch remains 32 on one GPU')
     parser.add_argument('--lora-rank', type=int, default=0, help='0: ordinary last-4 tuning; positive: attention LoRA only in backbone')
+    parser.add_argument('--multitask-labels', action='store_true', help='Use v3 teacher_labels.npz, including for depth-only control')
+    parser.add_argument('--mask-weight', type=float, default=0., help='Before pseudo-loss-weight multiplier')
+    parser.add_argument('--normal-weight', type=float, default=0., help='Before pseudo-loss-weight multiplier')
     parser.add_argument('--lora-lr', type=float, default=1e-5)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--dry-run', action='store_true', help='Write configs/commands only; no torch or data required')
@@ -165,7 +198,8 @@ def main():
     pseudo_root = args.pseudo_root or args.data_root / 'v4l2_pseudo_v1'
     config, validation, batch, accumulation = build_config(
         args.data_root, pseudo_root, args.real_fraction, args.pseudo_loss_weight,
-        args.num_iterations, args.batch_size, args.lora_rank, args.lora_lr)
+        args.num_iterations, args.batch_size, args.lora_rank, args.lora_lr,
+        args.multitask_labels, args.mask_weight, args.normal_weight)
     if not args.dry_run:
         if not args.student.is_file():
             parser.error(f'Student checkpoint not found: {args.student}')
