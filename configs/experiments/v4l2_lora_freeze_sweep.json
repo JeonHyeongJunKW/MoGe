@@ -1,0 +1,13 @@
+{
+  "workspace_group": "v4l2_lora_freeze_sweep",
+  "num_iterations": 3000,
+  "batch_size": 8,
+  "real_fraction": 0.25,
+  "pseudo_loss_weight": 0.25,
+  "multitask_labels": true,
+  "pseudo_root": "/home/coder/dataset/v4l2_pseudo_v3",
+  "experiments": [
+    {"name": "lora_r4_only", "lora_rank": 4, "lora_lr": 1e-5, "mask_weight": 0.1, "normal_weight": 0.1, "trainable_components": []},
+    {"name": "lora_r4_scale", "lora_rank": 4, "lora_lr": 1e-5, "mask_weight": 0.1, "normal_weight": 0.1, "trainable_components": ["scale_head"]}
+  ]
+}

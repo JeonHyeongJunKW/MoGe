@@ -87,7 +87,8 @@ def main(default_manifest=None):
     for e in experiments:
         build_config(args.data_root, pseudo, manifest['real_fraction'], manifest['pseudo_loss_weight'],
                      iterations, batch, e['lora_rank'], e['lora_lr'],
-                     manifest.get('multitask_labels', False), e.get('mask_weight', 0.), e.get('normal_weight', 0.))
+                     manifest.get('multitask_labels', False), e.get('mask_weight', 0.), e.get('normal_weight', 0.),
+                     e.get('trainable_components'))
     label = 'dry_run' if args.dry_run else 'smoke' if args.smoke else 'train'
     root = (args.root or ROOT / 'workspace' / manifest.get('workspace_group', 'v4l2_lora_sweep') /
             (datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f') + '_' + label)).resolve()
@@ -109,6 +110,8 @@ def main(default_manifest=None):
                    '--batch-size', str(batch), '--num-iterations', str(iterations),
                    '--lora-rank', str(experiment['lora_rank']), '--lora-lr', str(experiment['lora_lr'])]
         command += ['--main-process-port', str(args.port_base + index)]
+        if 'trainable_components' in experiment:
+            command += ['--trainable-components', *experiment['trainable_components']]
         if manifest.get('multitask_labels'):
             command += ['--multitask-labels', '--mask-weight', str(experiment.get('mask_weight', 0.)),
                         '--normal-weight', str(experiment.get('normal_weight', 0.))]

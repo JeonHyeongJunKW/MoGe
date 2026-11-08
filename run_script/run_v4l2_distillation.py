@@ -18,7 +18,8 @@ from run_script.sweep_5000 import COMPONENTS, execute, resolve_experiment, write
 
 def build_config(data_root, pseudo_root, real_fraction=.25, pseudo_loss_weight=.25,
                  iterations=3000, batch_size=8, lora_rank=0, lora_lr=1e-5,
-                 multitask_labels=False, mask_weight=0.0, normal_weight=0.0):
+                 multitask_labels=False, mask_weight=0.0, normal_weight=0.0,
+                 trainable_components=None):
     if any(not math.isfinite(w) or w < 0 for w in (mask_weight, normal_weight)):
         raise ValueError('Auxiliary loss weights must be finite and nonnegative')
     if (mask_weight or normal_weight) and (not multitask_labels or not real_fraction):
@@ -57,6 +58,19 @@ def build_config(data_root, pseudo_root, real_fraction=.25, pseudo_loss_weight=.
         for group in config['optimizer']['params']:
             if group['name'] == 'backbone':
                 group['lr'] = lora_lr
+    if trainable_components is not None:
+        allowed = set(COMPONENTS) - {'rgb_detail'}
+        if len(trainable_components) != len(set(trainable_components)) or set(trainable_components) - allowed:
+            raise ValueError('Invalid trainable component selection')
+        selected = set(trainable_components)
+        rates = config['sweep_experiment']['learning_rates']
+        for name in COMPONENTS:
+            if name not in selected:
+                rates.pop(name, None)
+        config['optimizer']['params'] = [g for g in config['optimizer']['params']
+                                         if g['name'] == 'backbone' or g['name'] in selected]
+        config['lr_scheduler']['params']['lr_lambda'] = config['lr_scheduler']['params']['lr_lambda'][:len(config['optimizer']['params'])]
+        config['trainable_heads'] = {name: name in selected for name in COMPONENTS}
     total = sum(ds['weight'] for ds in config['data']['datasets'])
     for ds in config['data']['datasets']:
         ds['weight'] = (1 - real_fraction) * ds['weight'] / total
@@ -190,6 +204,8 @@ def main():
     parser.add_argument('--multitask-labels', action='store_true', help='Use v3 teacher_labels.npz, including for depth-only control')
     parser.add_argument('--mask-weight', type=float, default=0., help='Before pseudo-loss-weight multiplier')
     parser.add_argument('--normal-weight', type=float, default=0., help='Before pseudo-loss-weight multiplier')
+    parser.add_argument('--trainable-components', nargs='*', choices=list(COMPONENTS),
+                        help='Select neck/heads to train; empty list means LoRA only')
     parser.add_argument('--lora-lr', type=float, default=1e-5)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--dry-run', action='store_true', help='Write configs/commands only; no torch or data required')
@@ -202,7 +218,7 @@ def main():
     config, validation, batch, accumulation = build_config(
         args.data_root, pseudo_root, args.real_fraction, args.pseudo_loss_weight,
         args.num_iterations, args.batch_size, args.lora_rank, args.lora_lr,
-        args.multitask_labels, args.mask_weight, args.normal_weight)
+        args.multitask_labels, args.mask_weight, args.normal_weight, args.trainable_components)
     if not args.dry_run:
         if not args.student.is_file():
             parser.error(f'Student checkpoint not found: {args.student}')
