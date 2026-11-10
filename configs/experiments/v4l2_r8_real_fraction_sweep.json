@@ -1,0 +1,29 @@
+{
+  "workspace_group": "v4l2_r8_real_fraction_sweep",
+  "num_iterations": 3000,
+  "batch_size": 8,
+  "real_fraction": 0.25,
+  "pseudo_loss_weight": 0.25,
+  "multitask_labels": true,
+  "log_v4l2_train_rel": true,
+  "pseudo_root": "/home/coder/dataset/v4l2_pseudo_v3",
+  "real_validation_root": "/home/coder/dataset/v4l2_holdout_20261106_front_left",
+  "experiments": [
+    {
+      "name": "lora_r8_real10",
+      "real_fraction": 0.10,
+      "lora_rank": 8,
+      "lora_lr": 1e-5,
+      "mask_weight": 0.1,
+      "normal_weight": 0.1
+    },
+    {
+      "name": "lora_r8_real20",
+      "real_fraction": 0.20,
+      "lora_rank": 8,
+      "lora_lr": 1e-5,
+      "mask_weight": 0.1,
+      "normal_weight": 0.1
+    }
+  ]
+}

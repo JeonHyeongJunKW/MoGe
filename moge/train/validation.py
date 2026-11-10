@@ -1,5 +1,6 @@
 """Periodic, deterministic MoGe-2 validation and model-only best checkpoints."""
 import hashlib
+import csv
 import json
 import math
 import random
@@ -27,6 +28,8 @@ class ValidationRunner:
         self.batch_size = config.get('batch_size', 1)
         self.seed = config.get('seed', 0)
         self.datasets = config.get('datasets', {})
+        self.teacher_reference = config.get('teacher_reference')
+        self.pseudo_train_reference = config.get('pseudo_train_reference')
         self.depth_bins = validate_depth_bins(config.get('depth_bins'))
         self.depth_bin_results = None
         self.per_image_metrics = config.get('per_image_metrics', False)
@@ -42,7 +45,7 @@ class ValidationRunner:
             raise ValueError('validation.visualization.num_samples must be a non-negative integer')
         if type(self.vis_max_points) is not int or self.vis_max_points < 1:
             raise ValueError('validation.visualization.max_points must be a positive integer')
-        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization', 'depth_bins', 'per_image_metrics'}
+        unknown = set(config) - {'every', 'monitor', 'mode', 'max_samples', 'resolution_level', 'batch_size', 'seed', 'datasets', 'metric_groups', 'visualization', 'depth_bins', 'per_image_metrics', 'teacher_reference', 'pseudo_train_reference'}
         if unknown:
             raise ValueError(f'Unknown validation options: {sorted(unknown)}')
         if type(self.seed) is not int or not 0 <= self.seed < 2 ** 32:
@@ -65,6 +68,30 @@ class ValidationRunner:
         # Visualization does not affect metrics; allow enabling it on resumed runs.
         # Auxiliary distance reports also leave the overall monitor unchanged.
         identity = {'config': {k: v for k, v in self.config.items() if k not in ('visualization', 'depth_bins', 'per_image_metrics')}, 'splits': {}}
+        if self.teacher_reference is not None:
+            from .teacher_reference_validation import validate_reference
+            if (not isinstance(self.teacher_reference, dict) or
+                    set(self.teacher_reference) != {'name', 'path'}):
+                raise ValueError('validation.teacher_reference requires name and path')
+            reference_name = self.teacher_reference['name']
+            if (reference_name in self.datasets or reference_name == 'mean' or
+                    not isinstance(reference_name, str) or not reference_name.replace('_', '').isalnum()):
+                raise ValueError('Invalid Teacher reference name')
+            _, manifest_bytes = validate_reference(self.teacher_reference['path'])
+            identity['teacher_reference_manifest_sha256'] = hashlib.sha256(manifest_bytes).hexdigest()
+        if self.pseudo_train_reference is not None:
+            from .teacher_reference_validation import validate_pseudo_train
+            if (not isinstance(self.pseudo_train_reference, dict) or
+                    set(self.pseudo_train_reference) != {'name', 'path'}):
+                raise ValueError('validation.pseudo_train_reference requires name and path')
+            train_name = self.pseudo_train_reference['name']
+            if (not isinstance(train_name, str) or not train_name.replace('_', '').isalnum() or
+                    train_name in self.datasets or train_name == 'mean' or
+                    (self.teacher_reference is not None and train_name == self.teacher_reference['name'])):
+                raise ValueError('Invalid V4L2 train reference name')
+            _, manifest_bytes, index_bytes = validate_pseudo_train(self.pseudo_train_reference['path'])
+            identity['pseudo_train_manifest_sha256'] = hashlib.sha256(manifest_bytes).hexdigest()
+            identity['pseudo_train_index_sha256'] = hashlib.sha256(index_bytes).hexdigest()
         for name, dataset in self.datasets.items():
             if '/' in name or '\\' in name or name in ('', '.', '..', 'mean'):
                 raise ValueError('Validation dataset names must be safe directory names and cannot equal mean')
@@ -235,6 +262,24 @@ class ValidationRunner:
             np.random.set_state(numpy_state)
         # Each eligible image has equal weight, rather than each dataset.
         results['mean'] = {key: totals[key] / counts[key] for key in totals}
+        if self.teacher_reference is not None:
+            from .teacher_reference_validation import evaluate_teacher_reference
+            try:
+                model.eval()
+                results[self.teacher_reference['name']] = evaluate_teacher_reference(
+                    model, device, self.teacher_reference['path'])
+            finally:
+                for module, training in training_modes:
+                    module.training = training
+        if self.pseudo_train_reference is not None:
+            from .teacher_reference_validation import evaluate_pseudo_train
+            try:
+                model.eval()
+                results[self.pseudo_train_reference['name']] = evaluate_pseudo_train(
+                    model, device, self.pseudo_train_reference['path'])
+            finally:
+                for module, training in training_modes:
+                    module.training = training
         if self.depth_bins is not None:
             self.depth_bin_results = depth_bin_report(depth_accumulators, self.depth_bins)
         return results
@@ -259,6 +304,23 @@ class ValidationRunner:
             # Use a distinct prefix: sweep summaries glob step_*.json for overall metrics.
             write_depth_bin_report(output_dir / f'depth_bins_step_{step:08d}', depth_report)
         (output_dir / f'step_{step:08d}.json').write_text(json.dumps(info, indent=2, allow_nan=False))
+        if self.pseudo_train_reference is not None:
+            fields = ('step', 'carla_depth_rel', 'v4l2_train_rel', 'v4l2_train_mae_m',
+                      'v4l2_train_delta1', 'v4l2_holdout_rel')
+            with (output_dir / 'v4l2_train_curve.csv').open('w', newline='') as stream:
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writeheader()
+                for file in sorted(output_dir.glob('step_*.json')):
+                    saved = json.loads(file.read_text())
+                    groups = saved['metrics']
+                    train = groups.get(self.pseudo_train_reference['name'], {})
+                    real = groups.get(self.teacher_reference['name'], {}) if self.teacher_reference is not None else {}
+                    writer.writerow(dict(step=saved['step'],
+                        carla_depth_rel=groups.get('gaemi_sim_val', {}).get('depth_metric/rel', ''),
+                        v4l2_train_rel=train.get('depth_teacher/rel', ''),
+                        v4l2_train_mae_m=train.get('depth_teacher/mae_m', ''),
+                        v4l2_train_delta1=train.get('depth_teacher/delta1', ''),
+                        v4l2_holdout_rel=real.get('depth_teacher/rel', '')))
         if improved:
             self.best_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.best_path.with_suffix('.pt.tmp')
@@ -283,6 +345,12 @@ class ValidationRunner:
         logger.log_validation(scalars, step)
         print(f'[Validation step {step}] {self.monitor}={score:.6g}, best={self.best_score:.6g}'
               + (' (saved best.pt)' if improved else ''))
+        if self.pseudo_train_reference is not None:
+            train_metrics = results[self.pseudo_train_reference['name']]
+            print(f'[Validation step {step}] V4L2 TRAIN Teacher metric Abs Rel='
+                  f'{train_metrics["depth_teacher/rel"]:.6f}, MAE='
+                  f'{train_metrics["depth_teacher/mae_m"]:.4f} m'
+                  f' ({train_metrics["num_samples"]} images)')
 
     def run(self, model, accelerator, model_config, step, logger):
         """Called on every rank; only rank zero evaluates the unwrapped model."""

@@ -20,18 +20,34 @@ def summarize(root, runs):
         directory = root / name
         initial = read_optional(directory / 'validation/step_00000000.json')
         best = read_optional(directory / 'validation/best.json')
+        step_files = sorted((directory / 'validation').glob('step_*.json'))
+        latest = read_optional(step_files[-1]) if step_files else {}
         memory = read_optional(directory / 'training_memory.json')
         assignments = read_optional(directory / 'optimizer_param_assignments.json')
         config = read_optional(directory / 'train_config.json')
         pseudo_loss = config.get('loss', {}).get('PSEUDO', {})
         parameters = assignments.get('parameters', [])
         metrics = best.get('metrics', {}).get('mean', {})
+        real_metrics = best.get('metrics', {}).get('v4l2_front_left_teacher', {})
+        train_metrics = best.get('metrics', {}).get('v4l2_train_teacher', {})
+        initial_train_metrics = initial.get('metrics', {}).get('v4l2_train_teacher', {})
+        latest_train_metrics = latest.get('metrics', {}).get('v4l2_train_teacher', {})
         trainable = [p for p in parameters if p['requires_grad']]
-        rows.append(dict(experiment=name, rank=rank, status=status,
+        rows.append(dict(experiment=name, rank=rank,
+                         real_fraction=config.get('distillation', {}).get('real_sampling_fraction', ''),
+                         status=status,
                          teacher_mask_weight=sum(v['weight'] for v in pseudo_loss.get('mask', {}).values()),
                          teacher_normal_weight=sum(v['weight'] for v in pseudo_loss.get('normal', {}).values()),
                          initial_rel=initial.get('score', ''), best_rel=best.get('score', ''),
                          best_delta1=metrics.get('depth_metric/delta1', ''), best_step=best.get('step', ''),
+                         best_real_teacher_rel=real_metrics.get('depth_teacher/rel', ''),
+                         best_real_teacher_delta1=real_metrics.get('depth_teacher/delta1', ''),
+                         best_real_teacher_normal_deg=real_metrics.get('normal_teacher/angle_deg', ''),
+                         best_real_teacher_mask_negative_recall=real_metrics.get('mask_teacher/negative_recall', ''),
+                         initial_v4l2_train_rel=initial_train_metrics.get('depth_teacher/rel', ''),
+                         best_carla_step_v4l2_train_rel=train_metrics.get('depth_teacher/rel', ''),
+                         latest_v4l2_train_rel=latest_train_metrics.get('depth_teacher/rel', ''),
+                         latest_v4l2_train_mae_m=latest_train_metrics.get('depth_teacher/mae_m', ''),
                          trainable_parameters=sum(p['numel'] for p in trainable) if parameters else '',
                          lora_parameters=sum(p['numel'] for p in trainable if '.lora_' in p['name']) if parameters else '',
                          peak_allocated_gib=memory.get('peak_allocated_gib', ''),
@@ -51,6 +67,8 @@ def main(default_manifest=None):
     parser.add_argument('--data-root', type=Path, default=Path('/home/coder/dataset'))
     parser.add_argument('--pseudo-root', type=Path)
     parser.add_argument('--student', type=Path, default=ROOT / 'pretrained/best_flip_mild_t400_total18500.pt')
+    parser.add_argument('--real-validation-root', type=Path,
+                        help='Independent front_left Teacher-reference dataset')
     parser.add_argument('--experiment', action='append', help='Experiment name from manifest; repeatable')
     parser.add_argument('--devices', nargs='+', help='One distinct CUDA device/MIG UUID per selected experiment; enables parallel execution in manifest order')
     parser.add_argument('--port-base', type=int, default=29600)
@@ -84,8 +102,9 @@ def main(default_manifest=None):
     sys.path.insert(0, str(ROOT))
     from run_script.run_v4l2_distillation import build_config
     pseudo = args.pseudo_root or Path(manifest.get('pseudo_root', args.data_root / 'v4l2_pseudo_v1'))
+    real_validation = args.real_validation_root or (Path(manifest['real_validation_root']) if manifest.get('real_validation_root') else None)
     for e in experiments:
-        build_config(args.data_root, pseudo, manifest['real_fraction'], manifest['pseudo_loss_weight'],
+        build_config(args.data_root, pseudo, e.get('real_fraction', manifest['real_fraction']), manifest['pseudo_loss_weight'],
                      iterations, batch, e['lora_rank'], e['lora_lr'],
                      manifest.get('multitask_labels', False), e.get('mask_weight', 0.), e.get('normal_weight', 0.),
                      e.get('trainable_components'))
@@ -105,11 +124,15 @@ def main(default_manifest=None):
         command = [sys.executable, str(ROOT / 'run_script/run_v4l2_distillation.py'),
                    '--root', str(root / name), '--data-root', str(args.data_root.resolve()),
                    '--pseudo-root', str(pseudo.resolve()), '--student', str(args.student.resolve()),
-                   '--real-fraction', str(manifest['real_fraction']),
+                   '--real-fraction', str(experiment.get('real_fraction', manifest['real_fraction'])),
                    '--pseudo-loss-weight', str(manifest['pseudo_loss_weight']),
                    '--batch-size', str(batch), '--num-iterations', str(iterations),
                    '--lora-rank', str(experiment['lora_rank']), '--lora-lr', str(experiment['lora_lr'])]
         command += ['--main-process-port', str(args.port_base + index)]
+        if real_validation is not None:
+            command += ['--real-validation-root', str(real_validation.resolve())]
+        if manifest.get('log_v4l2_train_rel', False):
+            command.append('--log-v4l2-train-rel')
         if 'trainable_components' in experiment:
             command += ['--trainable-components', *experiment['trainable_components']]
         if manifest.get('multitask_labels'):

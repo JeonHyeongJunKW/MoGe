@@ -124,6 +124,7 @@ def check_index(root, index):
 
 def preflight(config, validation):
     from tools.v4l2_distillation import sha256
+    pseudo_sessions = set()
     for ds in config['data']['datasets']:
         names = check_index(ds['path'], ds['index'])
         if ds['label_type'] != 'PSEUDO':
@@ -134,6 +135,7 @@ def preflight(config, validation):
         if manifest.get('status') != 'complete' or manifest.get('format') != expected_format:
             raise ValueError('Expected complete v4l2 pseudo dataset')
         records = manifest['samples']
+        pseudo_sessions.update(r['session'] for r in records if r['split'] == 'train')
         expected = {r['sample'] for r in records if r['split'] == 'train'}
         if set(names) != expected:
             raise ValueError('Pseudo training index differs from declared train split')
@@ -175,6 +177,19 @@ def preflight(config, validation):
             manifest_sha256=sha256(root / 'dataset.json'), settings=manifest['settings'], counts=manifest['counts'])
     for ds in validation['datasets'].values():
         check_index(ds['path'], ds['split'])
+    if 'teacher_reference' in validation:
+        from moge.train.teacher_reference_validation import validate_reference
+        manifest, _ = validate_reference(validation['teacher_reference']['path'])
+        if pseudo_sessions & {r['session'] for r in manifest['samples']}:
+            raise ValueError('Teacher reference session overlaps V4L2 training sessions')
+    if 'pseudo_train_reference' in validation:
+        from moge.train.teacher_reference_validation import validate_pseudo_train
+        reference_path = Path(validation['pseudo_train_reference']['path']).resolve()
+        pseudo_paths = {Path(ds['path']).resolve() for ds in config['data']['datasets']
+                        if ds['label_type'] == 'PSEUDO'}
+        if reference_path not in pseudo_paths:
+            raise ValueError('V4L2 train metric must use the actual pseudo training dataset')
+        validate_pseudo_train(reference_path)
 
 
 def validate_student(checkpoint):
@@ -207,6 +222,10 @@ def main():
     parser.add_argument('--trainable-components', nargs='*', choices=list(COMPONENTS),
                         help='Select neck/heads to train; empty list means LoRA only')
     parser.add_argument('--lora-lr', type=float, default=1e-5)
+    parser.add_argument('--real-validation-root', type=Path,
+                        help='Independent V4L2 front_left Teacher reference; reported alongside CARLA GT')
+    parser.add_argument('--log-v4l2-train-rel', action='store_true',
+                        help='Evaluate all V4L2 train frames against Teacher metric depth at every validation')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--dry-run', action='store_true', help='Write configs/commands only; no torch or data required')
     mode.add_argument('--smoke', action='store_true',
@@ -219,6 +238,14 @@ def main():
         args.data_root, pseudo_root, args.real_fraction, args.pseudo_loss_weight,
         args.num_iterations, args.batch_size, args.lora_rank, args.lora_lr,
         args.multitask_labels, args.mask_weight, args.normal_weight, args.trainable_components)
+    if args.real_validation_root is not None:
+        validation['teacher_reference'] = dict(
+            name='v4l2_front_left_teacher', path=str(args.real_validation_root.resolve()))
+    if args.log_v4l2_train_rel:
+        if args.real_fraction <= 0 or not args.multitask_labels:
+            parser.error('--log-v4l2-train-rel requires V4L2 multitask training data')
+        validation['pseudo_train_reference'] = dict(
+            name='v4l2_train_teacher', path=str(pseudo_root.resolve()))
     if not args.dry_run:
         if not args.student.is_file():
             parser.error(f'Student checkpoint not found: {args.student}')
